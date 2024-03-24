@@ -1,5 +1,6 @@
 plugins {
     kotlin("jvm") version "1.9.23"
+    id("publish")
 }
 
 group = "be.bluexin"
