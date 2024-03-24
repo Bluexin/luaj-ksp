@@ -3,7 +3,6 @@ plugins {
 }
 
 group = "be.bluexin"
-version = "1.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
