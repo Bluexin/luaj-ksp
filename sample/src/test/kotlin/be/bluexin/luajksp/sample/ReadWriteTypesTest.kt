@@ -13,7 +13,6 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
-// TODO : Cover complex types
 class ReadWriteTypesTest {
 
     @BeforeTest
@@ -92,6 +91,26 @@ class ReadWriteTypesTest {
         assertEquals(newText, test.text)
     }
 
+    @Test
+    fun `writing on field of type annotated java class is ok using property access syntax`() {
+        val test = ReadWriteTypesHolder(javaHolder = JavaPropertyLikeHolder().apply {
+            text = UUID.randomUUID().toString()
+        })
+        val newText = "Hello from Lua"
+
+        LuaJTest.runTestScript(
+            """
+                --- @type ReadWriteTypesHolder
+                local t = testing.testValue
+                assert_equals(${test.javaHolder.text.quoteIfNeeded}, t.javaHolder.text, "text")
+                t.javaHolder.text = ${newText.quoteIfNeeded}
+            """.trimIndent(),
+            test.toLua()
+        ).executionAsFailure()
+
+        assertEquals(newText, test.javaHolder.text)
+    }
+
     @Test // Should we allow storing arbitrary data ?
     fun `writing non existing value is nok`() {
         val test = ReadWriteTypesHolder()
@@ -124,6 +143,7 @@ class ReadWriteTypesTest {
         var boolean: Boolean = Random.nextBoolean(),
         var double: Double = Random.nextDouble(),
         var nullableText: String? = null,
+        val javaHolder: JavaPropertyLikeHolder = JavaPropertyLikeHolder()
     ) {
 
         /**

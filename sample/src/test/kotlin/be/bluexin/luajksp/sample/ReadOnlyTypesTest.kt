@@ -13,7 +13,6 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertIs
 
-// TODO : Cover complex types
 class ReadOnlyTypesTest {
 
     @BeforeTest
@@ -44,6 +43,22 @@ class ReadOnlyTypesTest {
                 assert_equals(${test.mostSignificantBits}, t.mostSignificantBits, "mostSignificantBits")
                 assert_equals(${test.leastSignificantBits}, t.leastSignificantBits, "leastSignificantBits")
                 assert_equals(${test.toString().quoteIfNeeded}, tostring(t), "tostring")
+            """.trimIndent(),
+            test.toLua()
+        ).executionAsFailure()
+    }
+
+    @Test
+    fun `reading on field of type annotated typealias is ok using property access syntax`() {
+        val test = ReadOnlyTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                --- @type ReadOnlyTypesHolder
+                local t = testing.testValue
+                assert_equals(${test.uuid.mostSignificantBits}, t.uuid.mostSignificantBits, "mostSignificantBits")
+                assert_equals(${test.uuid.leastSignificantBits}, t.uuid.leastSignificantBits, "leastSignificantBits")
+                assert_equals(${test.uuid.toString().quoteIfNeeded}, tostring(t.uuid), "tostring")
             """.trimIndent(),
             test.toLua()
         ).executionAsFailure()
@@ -114,6 +129,7 @@ class ReadOnlyTypesTest {
         val boolean: Boolean = Random.nextBoolean(),
         val double: Double = Random.nextDouble(),
         val nullableText: String? = null,
+        val uuid: ExposedUUID = UUID.randomUUID()
     ) {
 
         /**

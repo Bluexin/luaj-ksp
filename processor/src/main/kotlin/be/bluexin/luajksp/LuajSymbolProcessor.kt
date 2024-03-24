@@ -184,7 +184,7 @@ class LuajSymbolProcessor(
                 "String", "Int", "Long", "Boolean", "Double" -> "\"$simpleName\" -> CoerceJavaToLua.coerce(receiver.$simpleName)"
                 else -> {
                     val typeDeclaration = type.resolve().declaration
-                    if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
+                    if (typeDeclaration.isAnnotationPresent(LuajExpose::class) || typeDeclaration.isAnnotationPresent(LuajExposeExternal::class)) {
                         val typeFqn =
                             "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
                         "\"$simpleName\" -> $typeFqn(receiver.$simpleName)"
