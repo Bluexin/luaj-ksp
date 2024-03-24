@@ -4,6 +4,10 @@ import be.bluexin.luajksp.annotations.LuajExclude
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.sample.access.toLua
 import org.intellij.lang.annotations.Language
+import org.luaj.vm2.LuaFunction
+import org.luaj.vm2.LuaValue
+import org.luaj.vm2.Varargs
+import org.luaj.vm2.lib.jse.CoerceJavaToLua
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
@@ -135,6 +139,37 @@ class ReadWriteTypesTest {
         assertContains(result.errorMessage, "bad argument: value expected, got nil")
     }
 
+    @Test
+    fun `writing a callback with closure works as expected`() {
+        val test = ReadWriteTypesHolder()
+
+        LuaJTest.runTestScript(
+            "_t.sum = function(a, b) return a + b end",
+            test.toLua()
+        ).executionAsFailure()
+
+        assertEquals(5, test.sum(2, 3))
+    }
+
+    @Test
+    fun `writing a callback with named function works as expected`() {
+        val test = ReadWriteTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                function asum(a, b) return a + b end
+                _t.sum = asum
+            """.trimIndent(),
+            test.toLua()
+        ).executionAsFailure()
+
+        assertEquals(5, test.sum(2, 3))
+    }
+
+    fun wrap(fn: LuaFunction): (Int, Int) -> Int {
+        return {a, b -> fn.invoke(LuaValue.varargsOf(CoerceJavaToLua.coerce(a), CoerceJavaToLua.coerce(b))).checkint(0)}
+    }
+
     @LuajExpose
     data class ReadWriteTypesHolder(
         var text: String = UUID.randomUUID().toString(),
@@ -143,7 +178,8 @@ class ReadWriteTypesTest {
         var boolean: Boolean = Random.nextBoolean(),
         var double: Double = Random.nextDouble(),
         var nullableText: String? = null,
-        val javaHolder: JavaPropertyLikeHolder = JavaPropertyLikeHolder()
+        val javaHolder: JavaPropertyLikeHolder = JavaPropertyLikeHolder(),
+        var sum: (Int, Int) -> Int = {_, _, -> error("Not implemented") }
     ) {
 
         /**

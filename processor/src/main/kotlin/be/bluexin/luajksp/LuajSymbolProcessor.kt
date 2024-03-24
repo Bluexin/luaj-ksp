@@ -69,8 +69,8 @@ class LuajSymbolProcessor(
 
             val targetClassName = "${forDeclaration.simpleName.asString()}Access"
             val targetPackage = "${forDeclaration.packageName.asString()}.access"
-            logger.warn("Generating $targetPackage.$targetClassName for $receiverClassName")
-            logger.warn("Properties : $properties")
+            logger.info("Generating $targetPackage.$targetClassName for $receiverClassName", forDeclaration)
+            logger.logging("Properties : $properties")
 
             codeGenerator.createNewFile(
                 Dependencies(true, forDeclaration.containingFile!!),
@@ -149,58 +149,128 @@ class LuajSymbolProcessor(
             }
         }
 
-        private fun String.luaValueToKotlin(prop: PropertyLike): String {
-            val type = prop.type.resolve()
+        private fun String.luaValueToKotlin(prop: PropertyLike): String =
+            luaValueToKotlin(prop.type) ?: prop.unsupportedTypeError()
+
+        // TODO : handle KFunction/LuaClosure
+        private fun String.luaValueToKotlin(typeRef: KSTypeReference): String? {
+            val type = typeRef.resolve()
             val receiver = if (type.nullability == Nullability.NOT_NULL) "$this.checknotnil()" else this
+            logger.logging("Processing $typeRef (resolved to `$type`) for $this", typeRef)
             return buildString {
                 if (type.nullability == Nullability.NULLABLE) append("if (${this@luaValueToKotlin}.isnil()) null else ")
 
-                when (prop.type.toString()) {
+                when (typeRef.toString()) {
                     "String" -> append(receiver).append(".checkjstring()")
                     "Int" -> append(receiver).append(".checkint()")
                     "Long" -> append(receiver).append(".checklong()")
                     "Boolean" -> append(receiver).append(".checkboolean()")
                     "Double" -> append(receiver).append(".checkdouble()")
                     else -> {
-                        val typeDeclaration = type.declaration
-                        if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
-                            val typeFqn =
-                                "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
-                            append('(')
-                            append(receiver)
-                            append(".checkuserdata(")
-                            append(typeFqn)
-                            append("::class.java) as ")
-                            append(typeFqn)
-                            append(").receiver")
-                        } else prop.unsupportedTypeError()
+                        if (type.isFunctionType) luaFunctionToKotlin(type, receiver, typeRef)
+                        else {
+                            val typeDeclaration = type.declaration
+                            if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
+                                val typeFqn = typeDeclaration.typeFqn
+                                append('(')
+                                append(receiver)
+                                append(".checkuserdata(")
+                                append(typeFqn)
+                                append("::class.java) as ")
+                                append(typeFqn)
+                                append(").receiver")
+                            } else return null
+                        }
                     }
                 }
             }
         }
 
-        private fun PropertyLike.javaToLua(): String {
-            return when (type.toString()) {
-                "String", "Int", "Long", "Boolean", "Double" -> "\"$simpleName\" -> CoerceJavaToLua.coerce(receiver.$simpleName)"
-                else -> {
-                    val typeDeclaration = type.resolve().declaration
-                    if (typeDeclaration.isAnnotationPresent(LuajExpose::class) || typeDeclaration.isAnnotationPresent(LuajExposeExternal::class)) {
-                        val typeFqn =
-                            "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
-                        "\"$simpleName\" -> $typeFqn(receiver.$simpleName)"
-                    } else this.unsupportedTypeError()
-                }
+        private fun StringBuilder.luaFunctionToKotlin(
+            type: KSType,
+            receiver: String,
+            typeRef: KSTypeReference
+        ) {
+            logger.warn("Found function type $type")
+            append(receiver)
+            logger.warn("Decl : ${type.declaration}")
+            logger.warn("Args : ${type.arguments}")
+            append(".checkfunction()")
+            append(".let { fn -> { ")
+            val args = type.arguments.take(type.arguments.size - 1) // removing return type
+            args.forEachIndexed { index, arg ->
+                append("arg")
+                append(index)
+                if (index < args.size - 1) append(", ")
             }
+            if (args.isNotEmpty()) append(" -> ")
+            val lambda = buildString {
+                append("fn.invoke(")
+                if (args.isNotEmpty()) {
+                    append("LuaValue.varargsOf(")
+                    args.forEachIndexed { index, arg ->
+                        val argType =
+                            arg.type ?: error("Unable to resolve type of arg\$$index of Function type $type", typeRef)
+                        append(argType.javaToLua("arg$index"))
+                        if (index < args.size - 1) append(", ")
+                    }
+                    append(')')
+                }
+                append(").arg(1)") // single return value
+            }
+            append(
+                lambda.luaValueToKotlin(
+                    args.last().type ?: error("Unable to resolve return type of Function type $type", typeRef)
+                )
+            )
+            append(" } }")
+        }
+
+        private fun PropertyLike.javaToLua(): String {
+            val j2l = type.javaToLua("receiver.$simpleName") ?: unsupportedTypeError()
+            return "\"$simpleName\" -> $j2l"
+        }
+
+        private fun KSTypeReference.javaToLua(receiver: String): String? {
+            return when (toString()) {
+                "String", "Int", "Long", "Boolean", "Double" -> "CoerceJavaToLua.coerce($receiver)"
+                else -> {
+                    val type = resolve()
+                    if (type.isFunctionType) {
+                        logger.warn("Found function type", this)
+                        "TODO()"
+                    } else {
+                        val typeDeclaration = type.declaration
+                        if (
+                            typeDeclaration.isAnnotationPresent(LuajExpose::class) ||
+                            typeDeclaration.isAnnotationPresent(LuajExposeExternal::class)
+                        ) "${typeDeclaration.typeFqn}($receiver)"
+                        else null
+                    }
+                }
+                }
+        }
+
+        private val KSDeclaration.typeFqn get() = buildString {
+            append(packageName.asString())
+            append(".access.")
+            append(simpleName.asString())
+            append("Access")
         }
 
         private fun PropertyLike.unsupportedTypeError(): Nothing =
-            error("Unsupported type for ${this.parentDeclaration}.$this: $type")
+            error("Unsupported type for ${this.parentDeclaration}.${this.simpleName}: $type (${type.resolve()})", source)
 
         private fun luaType(type: KSTypeReference) = when (val ts = type.toString()) {
             "String" -> "string"
             "Int", "Double", "Long" -> "number"
             "Boolean" -> "boolean"
             else -> ts
+        }
+
+        private fun error(message: String, at: KSNode): Nothing {
+            logger.error(message, at)
+            error(message)
         }
 
         private fun String?.kdocToLDoc(indent: String = "") =
@@ -210,7 +280,7 @@ class LuajSymbolProcessor(
                 ?: "No documentation provided"
 
         override fun visitFunctionDeclaration(function: KSFunctionDeclaration, data: Unit) {
-            logger.warn("Visiting fn $function")
+            logger.logging("Visiting fn $function")
             if (function.include) {
                 // TODO : handle non property-like functions
                 PropertyLike.FromKSFunctions.fromFunction(function)
@@ -219,21 +289,21 @@ class LuajSymbolProcessor(
         }
 
         override fun visitPropertyGetter(getter: KSPropertyGetter, data: Unit) {
-            logger.warn("Visiting getter $getter")
+            logger.logging("Visiting getter $getter")
             getter.expose?.let { expose ->
-                logger.warn("Found $expose")
+                logger.logging("Found $expose")
             }
         }
 
         override fun visitPropertyAccessor(accessor: KSPropertyAccessor, data: Unit) {
-            logger.warn("Visiting accessor $accessor")
+            logger.logging("Visiting accessor $accessor")
             accessor.expose?.let { expose ->
-                logger.warn("Found $expose")
+                logger.logging("Found $expose")
             }
         }
 
         override fun visitPropertyDeclaration(property: KSPropertyDeclaration, data: Unit) {
-            logger.warn("Visiting property $property")
+            logger.logging("Visiting property $property")
             if (property.isPublic() && property.include) addPropertyLike(PropertyLike.FromKSProperty(property))
         }
 
@@ -241,9 +311,9 @@ class LuajSymbolProcessor(
         abstract val KSFunctionDeclaration.include: Boolean
 
         override fun visitPropertySetter(setter: KSPropertySetter, data: Unit) {
-            logger.warn("Visiting setter $setter")
+            logger.logging("Visiting setter $setter")
             setter.expose?.let { expose ->
-                logger.warn("Found $expose")
+                logger.logging("Found $expose")
             }
         }
 
@@ -268,7 +338,7 @@ class LuajSymbolProcessor(
             }
 
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
-            logger.warn("Visiting $classDeclaration")
+            logger.logging("Visiting $classDeclaration")
             super.visitClassDeclaration(classDeclaration, data)
 
             generateKotlin(classDeclaration)
@@ -299,8 +369,10 @@ class LuajSymbolProcessor(
         val type: KSTypeReference
         val parentDeclaration: KSDeclaration?
         val docString: String?
-        
-        fun mergeWith(other: PropertyLike): PropertyLike = throw UnsupportedOperationException("Cannot merge $this with $other")
+        val source: KSNode
+
+        fun mergeWith(other: PropertyLike): PropertyLike =
+            throw UnsupportedOperationException("Cannot merge $this with $other")
 
         data class FromKSProperty(
             private val property: KSPropertyDeclaration
@@ -311,6 +383,7 @@ class LuajSymbolProcessor(
             override val type get() = property.type
             override val parentDeclaration get() = property.parentDeclaration
             override val docString get() = property.docString
+            override val source get() = property
         }
 
         @Suppress("DataClassPrivateConstructor")
@@ -323,10 +396,12 @@ class LuajSymbolProcessor(
             override val hasGetter get() = getter != null
             override val hasSetter get() = setter != null
             override val parentDeclaration get() = getter?.parentDeclaration ?: setter?.parentDeclaration
-            override val docString get() = listOfNotNull(
-                getter?.docString?.let { "Getter: ${it.trim()}" },
-                setter?.docString?.let { "Setter: ${it.trim()}" }
-            ).joinToString("\n ").replace('@', '-')
+            override val docString
+                get() = listOfNotNull(
+                    getter?.docString?.let { "Getter: ${it.trim()}" },
+                    setter?.docString?.let { "Setter: ${it.trim()}" }
+                ).joinToString("\n ").replace('@', '-')
+            override val source get() = getter ?: setter!!
 
             override fun mergeWith(other: PropertyLike): FromKSFunctions {
                 require(other is FromKSFunctions) { "Cannot merge $this with $other" }
@@ -340,7 +415,7 @@ class LuajSymbolProcessor(
                     require(other.setter != null && other.getter == null) { "Getter/Setter mismatch merging $this with $other" }
                     setter = other.setter
                 } else error("Cannot merge already complete $this")
-                
+
                 return this
             }
 
