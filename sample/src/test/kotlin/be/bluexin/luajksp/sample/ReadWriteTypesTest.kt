@@ -72,6 +72,26 @@ class ReadWriteTypesTest {
         assertEquals(null, test.nullableText)
     }
 
+    @Test
+    fun `writing on annotated java class is ok using property access syntax`() {
+        val test = JavaPropertyLikeHolder().apply {
+            text = UUID.randomUUID().toString()
+        }
+        val newText = "Hello from Lua"
+
+        LuaJTest.runTestScript(
+            """
+                --- @type JavaPropertyLikeHolder
+                local t = testing.testValue
+                assert_equals(${test.text.quoteIfNeeded}, t.text, "text")
+                t.text = ${newText.quoteIfNeeded}
+            """.trimIndent(),
+            test.toLua()
+        ).executionAsFailure()
+
+        assertEquals(newText, test.text)
+    }
+
     @Test // Should we allow storing arbitrary data ?
     fun `writing non existing value is nok`() {
         val test = ReadWriteTypesHolder()

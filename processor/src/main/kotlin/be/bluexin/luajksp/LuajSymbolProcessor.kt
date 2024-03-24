@@ -5,14 +5,12 @@ import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExpose.IncludeType.OPT_IN
 import be.bluexin.luajksp.annotations.LuajExpose.IncludeType.OPT_OUT
 import be.bluexin.luajksp.annotations.LuajExposeExternal
-import com.google.devtools.ksp.KspExperimental
-import com.google.devtools.ksp.getAnnotationsByType
-import com.google.devtools.ksp.isAnnotationPresent
+import com.google.devtools.ksp.*
 import com.google.devtools.ksp.processing.*
 import com.google.devtools.ksp.symbol.*
-import com.google.devtools.ksp.validate
 import org.intellij.lang.annotations.Language
 import java.io.OutputStream
+import java.util.*
 
 class LuajSymbolProcessor(
     private val codeGenerator: CodeGenerator,
@@ -55,7 +53,12 @@ class LuajSymbolProcessor(
 
     @OptIn(KspExperimental::class)
     private abstract inner class LuajVisitor : KSVisitorVoid() {
-        private val properties = mutableListOf<KSPropertyDeclaration>()
+        private val properties = mutableMapOf<String, PropertyLike>()
+        private fun addPropertyLike(new: PropertyLike) {
+            properties.compute(new.simpleName) { _, existing ->
+                existing?.mergeWith(new) ?: new
+            }
+        }
 
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
             classDeclaration.declarations.forEach { it.accept(this, data) }
@@ -92,9 +95,9 @@ class LuajSymbolProcessor(
                         override fun set(key: LuaValue, value: LuaValue) {
                             when (key.checkjstring()) {
                             ${
-                        properties.filter { it.isMutable }
+                        properties.values.filter(PropertyLike::hasSetter)
                             .joinToString(separator = "\n                            ") {
-                                val sn = it.simpleName.getShortName()
+                                val sn = it.simpleName
                                 """    "$sn" -> receiver.$sn = ${"value".luaValueToKotlin(it)}"""
                             }
                     }
@@ -104,7 +107,7 @@ class LuajSymbolProcessor(
 
                         override fun get(key: LuaValue): LuaValue = when (key.checkjstring()) {
                         ${
-                        properties.filter { it.getter != null }
+                        properties.values.filter(PropertyLike::hasGetter)
                             .joinToString(separator = "\n                        ") {
                                 "    ${it.javaToLua()}"
                             }
@@ -132,12 +135,12 @@ class LuajSymbolProcessor(
                     |--- ${classDeclaration.docString.kdocToLDoc("    ")}
                     |--- @class $targetClassName
                     |$targetClassName = {${
-                        properties.joinToString(separator = ",\n") {
+                        properties.values.joinToString(separator = ",\n") {
                             """
                             |    --- ${it.docString.kdocToLDoc("    ")}
-                            |    --- ${if (it.isMutable) "mutable" else "immutable"}
+                            |    --- ${if (it.hasSetter) "mutable" else "immutable"}
                             |    --- @type ${luaType(it.type)}
-                            |    ${it.simpleName.getShortName()} = nil"""
+                            |    ${it.simpleName} = nil"""
                         }
                     }
                     |}
@@ -146,7 +149,7 @@ class LuajSymbolProcessor(
             }
         }
 
-        private fun String.luaValueToKotlin(prop: KSPropertyDeclaration): String {
+        private fun String.luaValueToKotlin(prop: PropertyLike): String {
             val type = prop.type.resolve()
             val receiver = if (type.nullability == Nullability.NOT_NULL) "$this.checknotnil()" else this
             return buildString {
@@ -176,23 +179,22 @@ class LuajSymbolProcessor(
             }
         }
 
-        private fun KSPropertyDeclaration.javaToLua(): String {
-            val sn = simpleName.getShortName()
+        private fun PropertyLike.javaToLua(): String {
             return when (type.toString()) {
-                "String", "Int", "Long", "Boolean", "Double" -> "\"$sn\" -> CoerceJavaToLua.coerce(receiver.$sn)"
+                "String", "Int", "Long", "Boolean", "Double" -> "\"$simpleName\" -> CoerceJavaToLua.coerce(receiver.$simpleName)"
                 else -> {
                     val typeDeclaration = type.resolve().declaration
                     if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
                         val typeFqn =
                             "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
-                        "\"$sn\" -> $typeFqn(receiver.$sn)"
+                        "\"$simpleName\" -> $typeFqn(receiver.$simpleName)"
                     } else this.unsupportedTypeError()
                 }
             }
         }
 
-        private fun KSPropertyDeclaration.unsupportedTypeError(): Nothing =
-            error("Unsupported type for ${this.parentDeclaration}.$this: ${this.type}")
+        private fun PropertyLike.unsupportedTypeError(): Nothing =
+            error("Unsupported type for ${this.parentDeclaration}.$this: $type")
 
         private fun luaType(type: KSTypeReference) = when (val ts = type.toString()) {
             "String" -> "string"
@@ -202,12 +204,17 @@ class LuajSymbolProcessor(
         }
 
         private fun String?.kdocToLDoc(indent: String = "") =
-            this?.trim()?.replace("\n", "\n$indent--") ?: "No documentation provided"
+            this?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?.replace("\n", "\n$indent---")
+                ?: "No documentation provided"
 
         override fun visitFunctionDeclaration(function: KSFunctionDeclaration, data: Unit) {
             logger.warn("Visiting fn $function")
-            function.expose?.let { expose ->
-                logger.warn("Found $expose")
+            if (function.include) {
+                // TODO : handle non property-like functions
+                PropertyLike.FromKSFunctions.fromFunction(function)
+                    ?.let(::addPropertyLike)
             }
         }
 
@@ -227,10 +234,11 @@ class LuajSymbolProcessor(
 
         override fun visitPropertyDeclaration(property: KSPropertyDeclaration, data: Unit) {
             logger.warn("Visiting property $property")
-            if (property.include) properties += property
+            if (property.isPublic() && property.include) addPropertyLike(PropertyLike.FromKSProperty(property))
         }
 
         abstract val KSPropertyDeclaration.include: Boolean
+        abstract val KSFunctionDeclaration.include: Boolean
 
         override fun visitPropertySetter(setter: KSPropertySetter, data: Unit) {
             logger.warn("Visiting setter $setter")
@@ -253,6 +261,12 @@ class LuajSymbolProcessor(
                 OPT_OUT -> exclude == null
             }
 
+        override val KSFunctionDeclaration.include: Boolean
+            get() = when (this@LuajInternalVisitor.expose.includeType) {
+                OPT_IN -> exclude == null && expose != null
+                OPT_OUT -> exclude == null
+            }
+
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
             logger.warn("Visiting $classDeclaration")
             super.visitClassDeclaration(classDeclaration, data)
@@ -266,12 +280,105 @@ class LuajSymbolProcessor(
         override val KSPropertyDeclaration.include: Boolean
             get() = simpleName.asString() in this@LuajExternalVisitor.expose.whitelist
 
+        override val KSFunctionDeclaration.include: Boolean
+            get() = simpleName.asString() in this@LuajExternalVisitor.expose.whitelist
+
         override fun visitTypeAlias(typeAlias: KSTypeAlias, data: Unit) {
             logger.warn("Visiting $typeAlias")
             typeAlias.type.resolve().declaration.accept(this, data)
 
             generateKotlin(typeAlias)
             generateLua(typeAlias)
+        }
+    }
+
+    private sealed interface PropertyLike {
+        val hasGetter: Boolean
+        val hasSetter: Boolean
+        val simpleName: String
+        val type: KSTypeReference
+        val parentDeclaration: KSDeclaration?
+        val docString: String?
+        
+        fun mergeWith(other: PropertyLike): PropertyLike = throw UnsupportedOperationException("Cannot merge $this with $other")
+
+        data class FromKSProperty(
+            private val property: KSPropertyDeclaration
+        ) : PropertyLike {
+            override val hasGetter get() = property.getter != null
+            override val hasSetter get() = property.setter != null
+            override val simpleName get() = property.simpleName.asString()
+            override val type get() = property.type
+            override val parentDeclaration get() = property.parentDeclaration
+            override val docString get() = property.docString
+        }
+
+        @Suppress("DataClassPrivateConstructor")
+        data class FromKSFunctions private constructor(
+            override val simpleName: String,
+            override val type: KSTypeReference,
+            private var getter: KSFunctionDeclaration?,
+            private var setter: KSFunctionDeclaration?,
+        ) : PropertyLike {
+            override val hasGetter get() = getter != null
+            override val hasSetter get() = setter != null
+            override val parentDeclaration get() = getter?.parentDeclaration ?: setter?.parentDeclaration
+            override val docString get() = listOfNotNull(
+                getter?.docString?.let { "Getter: ${it.trim()}" },
+                setter?.docString?.let { "Setter: ${it.trim()}" }
+            ).joinToString("\n ").replace('@', '-')
+
+            override fun mergeWith(other: PropertyLike): FromKSFunctions {
+                require(other is FromKSFunctions) { "Cannot merge $this with $other" }
+                require(simpleName == other.simpleName) { "Name mismatch merging $this with $other" }
+                require(type.resolve() == other.type.resolve()) { "Type mismatch merging $this with $other" }
+
+                if (getter == null) {
+                    require(other.getter != null && other.setter == null) { "Getter/Setter mismatch merging $this with $other" }
+                    getter = other.getter
+                } else if (setter == null) {
+                    require(other.setter != null && other.getter == null) { "Getter/Setter mismatch merging $this with $other" }
+                    setter = other.setter
+                } else error("Cannot merge already complete $this")
+                
+                return this
+            }
+
+            companion object {
+                private val String.toPropName: String?
+                    get() = when {
+                        startsWith("get") -> substringAfter("get").replaceFirstChar { it.lowercase(Locale.getDefault()) }
+                        startsWith("set") -> substringAfter("set").replaceFirstChar { it.lowercase(Locale.getDefault()) }
+                        else -> null
+                    }
+
+                fun fromGetter(getter: KSFunctionDeclaration): FromKSFunctions? {
+                    if (getter.parameters.isNotEmpty()) return null
+                    val propName = getter.simpleName.asString().toPropName ?: return null
+                    return FromKSFunctions(
+                        simpleName = propName,
+                        type = getter.returnType ?: error("Unable to resolve return type of $getter"),
+                        getter = getter,
+                        setter = null
+                    )
+                }
+
+                fun fromSetter(setter: KSFunctionDeclaration): FromKSFunctions? {
+                    val propName = setter.simpleName.asString().toPropName ?: return null
+                    val param = setter.parameters.singleOrNull() ?: return null
+                    return FromKSFunctions(
+                        simpleName = propName,
+                        type = param.type,
+                        getter = null,
+                        setter = setter
+                    )
+                }
+
+                fun fromFunction(fn: KSFunctionDeclaration): FromKSFunctions? = when (fn.origin) {
+                    Origin.JAVA_LIB, Origin.JAVA -> fromGetter(fn) ?: fromSetter(fn)
+                    else -> null
+                }
+            }
         }
     }
 
