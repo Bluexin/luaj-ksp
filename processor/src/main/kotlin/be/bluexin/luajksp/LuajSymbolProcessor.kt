@@ -67,8 +67,18 @@ class LuajSymbolProcessor(
         protected fun generateKotlin(forDeclaration: KSDeclaration) {
             val receiverClassName = forDeclaration.simpleName.asString()
 
-            val targetClassName = "${forDeclaration.simpleName.asString()}Access"
-            val targetPackage = "${forDeclaration.packageName.asString()}.access"
+            val targetFqn = AccessClassFQN(forDeclaration)
+            val targetClassName = targetFqn.getShortName()
+            val targetPackage = targetFqn.getQualifier()
+
+            val parentClass = (if (forDeclaration is KSClassDeclaration) {
+                forDeclaration.superTypes
+                    .mapNotNull { it.resolve().declaration as? KSClassDeclaration }
+                    .singleOrNull {
+                        it.classKind == ClassKind.CLASS && it.isAnnotationPresent(LuajExpose::class)
+                    }?.let(::AccessClassFQN)
+            } else null) ?: LuaUserdataFQN
+
             logger.info("Generating $targetPackage.$targetClassName for $receiverClassName", forDeclaration)
             logger.logging("Properties : $properties")
 
@@ -77,11 +87,12 @@ class LuajSymbolProcessor(
                 targetPackage,
                 targetClassName
             ).use { file ->
+                @Suppress("RedundantSuppression", "ConvertToStringTemplate")
                 file.appendKotlin(
                     """
                     package $targetPackage
 
-                    import org.luaj.vm2.LuaUserdata
+                    import ${parentClass.asString()}
                     import org.luaj.vm2.LuaValue
                     import org.luaj.vm2.lib.jse.CoerceJavaToLua
                     
@@ -91,7 +102,10 @@ class LuajSymbolProcessor(
                      * Generated with luaj-ksp
                      */
                     @Suppress("RedundantSuppression", "ConvertToStringTemplate")
-                    class $targetClassName(val receiver: $receiverClassName): LuaUserdata(receiver, /*TODO: figure out metatable?*/) {
+                    ${if (forDeclaration.isOpen()) "open " else ""}class $targetClassName(
+                        ${if (parentClass == LuaUserdataFQN) "" else "override "}${if (forDeclaration.isOpen()) "open " else ""}val receiver: $receiverClassName
+                    ): ${parentClass.getShortName()}(receiver, /*TODO: figure out metatable?*/) {
+                    
                         override fun set(key: LuaValue, value: LuaValue) {
                             when (key.checkjstring()) {
                             ${
@@ -101,7 +115,7 @@ class LuajSymbolProcessor(
                                 """    "$sn" -> receiver.$sn = ${"value".luaValueToKotlin(it)}"""
                             }
                     }
-                                else -> error("Cannot set " + key + " on $receiverClassName")
+                                else -> ${if (parentClass == LuaUserdataFQN) "error(\"Cannot set \$key on $receiverClassName\")" else "super.set(key, value)"} 
                             }
                         }
 
@@ -112,7 +126,7 @@ class LuajSymbolProcessor(
                                 "    ${it.javaToLua()}"
                             }
                     }
-                            else -> error("Cannot get " + key + " on $receiverClassName")
+                            else ->  ${if (parentClass == LuaUserdataFQN) "error(\"Cannot get \$key on $receiverClassName\")" else "super.get(key)"}
                         }
                     }
 
@@ -248,18 +262,22 @@ class LuajSymbolProcessor(
                         else null
                     }
                 }
-                }
+            }
         }
 
-        private val KSDeclaration.typeFqn get() = buildString {
-            append(packageName.asString())
-            append(".access.")
-            append(simpleName.asString())
-            append("Access")
-        }
+        private val KSDeclaration.typeFqn
+            get() = buildString {
+                append(packageName.asString())
+                append(".access.")
+                append(simpleName.asString())
+                append("Access")
+            }
 
         private fun PropertyLike.unsupportedTypeError(): Nothing =
-            error("Unsupported type for ${this.parentDeclaration}.${this.simpleName}: $type (${type.resolve()})", source)
+            error(
+                "Unsupported type for ${this.parentDeclaration}.${this.simpleName}: $type (${type.resolve()})",
+                source
+            )
 
         private fun luaType(type: KSTypeReference) = when (val ts = type.toString()) {
             "String" -> "string"
@@ -462,4 +480,16 @@ class LuajSymbolProcessor(
             environment.codeGenerator, environment.logger
         )
     }
+}
+
+private object LuaUserdataFQN : KSName {
+    override fun asString() = "${getQualifier()}.${getShortName()}"
+    override fun getQualifier() = "org.luaj.vm2"
+    override fun getShortName() = "LuaUserdata"
+}
+
+private class AccessClassFQN(private val originalFQN: KSDeclaration) : KSName {
+    override fun asString() = "${getQualifier()}.${getShortName()}"
+    override fun getQualifier() = "${originalFQN.packageName.asString()}.access"
+    override fun getShortName() = "${originalFQN.simpleName.getShortName()}Access"
 }
