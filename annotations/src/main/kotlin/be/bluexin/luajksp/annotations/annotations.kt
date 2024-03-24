@@ -3,7 +3,7 @@ package be.bluexin.luajksp.annotations
 /**
  * Mark a class, property or function for exposition to LuaJ.
  */
-@Retention(AnnotationRetention.SOURCE)
+@Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY, AnnotationTarget.CLASS)
 annotation class LuajExpose(
     /**
@@ -28,16 +28,16 @@ annotation class LuajExpose(
 
 /**
  * Mark a property or function to be hidden from LuaJ.
- * Higher priority over [LuajExpose] // TODO : cover priority in test
+ * Higher priority over [LuajExpose]
  */
-@Retention(AnnotationRetention.SOURCE)
+@Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 annotation class LuajExclude
 
 /**
  * Marks a typealias for exposition to LuaJ.
  */
-@Retention(AnnotationRetention.SOURCE)
+@Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.TYPEALIAS)
 annotation class LuajExposeExternal(
     /**
