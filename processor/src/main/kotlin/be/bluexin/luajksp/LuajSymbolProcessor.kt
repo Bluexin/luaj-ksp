@@ -2,7 +2,8 @@ package be.bluexin.luajksp
 
 import be.bluexin.luajksp.annotations.LuajExclude
 import be.bluexin.luajksp.annotations.LuajExpose
-import be.bluexin.luajksp.annotations.LuajExpose.IncludeType.*
+import be.bluexin.luajksp.annotations.LuajExpose.IncludeType.OPT_IN
+import be.bluexin.luajksp.annotations.LuajExpose.IncludeType.OPT_OUT
 import be.bluexin.luajksp.annotations.LuajExposeExternal
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAnnotationsByType
@@ -145,19 +146,33 @@ class LuajSymbolProcessor(
             }
         }
 
-        // TODO : nullability ? + better type checking ?
-        private fun String.luaValueToKotlin(prop: KSPropertyDeclaration) = when (prop.type.toString()) {
-            "String" -> "$this.checkjstring()"
-            "Int" -> "$this.checkint()"
-            "Long" -> "$this.checklong()"
-            "Boolean" -> "$this.checkboolean()"
-            "Double" -> "$this.checkdouble()"
-            else -> {
-                val typeDeclaration = prop.type.resolve().declaration
-                if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
-                    val typeFqn = "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
-                    "($this.checkuserdata($typeFqn::class.java) as $typeFqn).receiver"
-                } else prop.unsupportedTypeError()
+        private fun String.luaValueToKotlin(prop: KSPropertyDeclaration): String {
+            val type = prop.type.resolve()
+            val receiver = if (type.nullability == Nullability.NOT_NULL) "$this.checknotnil()" else this
+            return buildString {
+                if (type.nullability == Nullability.NULLABLE) append("if (${this@luaValueToKotlin}.isnil()) null else ")
+
+                when (prop.type.toString()) {
+                    "String" -> append(receiver).append(".checkjstring()")
+                    "Int" -> append(receiver).append(".checkint()")
+                    "Long" -> append(receiver).append(".checklong()")
+                    "Boolean" -> append(receiver).append(".checkboolean()")
+                    "Double" -> append(receiver).append(".checkdouble()")
+                    else -> {
+                        val typeDeclaration = type.declaration
+                        if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
+                            val typeFqn =
+                                "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
+                            append('(')
+                            append(receiver)
+                            append(".checkuserdata(")
+                            append(typeFqn)
+                            append("::class.java) as ")
+                            append(typeFqn)
+                            append(").receiver")
+                        } else prop.unsupportedTypeError()
+                    }
+                }
             }
         }
 
@@ -168,14 +183,16 @@ class LuajSymbolProcessor(
                 else -> {
                     val typeDeclaration = type.resolve().declaration
                     if (typeDeclaration.isAnnotationPresent(LuajExpose::class)) {
-                        val typeFqn = "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
+                        val typeFqn =
+                            "${typeDeclaration.packageName.asString()}.access.${typeDeclaration.simpleName.asString()}Access"
                         "\"$sn\" -> $typeFqn(receiver.$sn)"
                     } else this.unsupportedTypeError()
                 }
             }
         }
 
-        private fun KSPropertyDeclaration.unsupportedTypeError(): Nothing = error("Unsupported type for ${this.parentDeclaration}.$this: ${this.type}")
+        private fun KSPropertyDeclaration.unsupportedTypeError(): Nothing =
+            error("Unsupported type for ${this.parentDeclaration}.$this: ${this.type}")
 
         private fun luaType(type: KSTypeReference) = when (val ts = type.toString()) {
             "String" -> "string"
@@ -240,7 +257,7 @@ class LuajSymbolProcessor(
             logger.warn("Visiting $classDeclaration")
             super.visitClassDeclaration(classDeclaration, data)
 
-            generateKotlin(classDeclaration,)
+            generateKotlin(classDeclaration)
             generateLua(classDeclaration)
         }
     }

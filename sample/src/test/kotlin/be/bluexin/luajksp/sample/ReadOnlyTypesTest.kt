@@ -23,7 +23,7 @@ class ReadOnlyTypesTest {
         val test = ReadOnlyTypesHolder()
 
         @Language("lua")
-        fun assertRead(expected: KProperty0<Any>) =
+        fun assertRead(expected: KProperty0<Any?>) =
             "assert_equals(${expected().quoteIfNeeded}, _t.${expected.name}, \"${expected.name}\")"
 
         LuaJTest.runTestScript(
@@ -65,7 +65,8 @@ class ReadOnlyTypesTest {
         val int: Int = Random.nextInt(-1_000, 1_000),
         val long: Long = Random.nextLong(-10_000_000_000, 10_000_000_000),
         val boolean: Boolean = Random.nextBoolean(),
-        val double: Double = Random.nextDouble()
+        val double: Double = Random.nextDouble(),
+        val nullableText: String? = null,
     ) {
 
         /**
@@ -74,7 +75,7 @@ class ReadOnlyTypesTest {
         @LuajExclude
         val fieldRefs
             get() = arrayOf(
-                ::text, ::int, ::long, ::boolean, ::double
+                ::text, ::int, ::long, ::boolean, ::double, ::nullableText
             )
     }
 }

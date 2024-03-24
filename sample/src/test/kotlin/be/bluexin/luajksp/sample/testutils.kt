@@ -11,7 +11,11 @@ val luaAssertionSupport by lazy {
     T::class.java.classLoader.getResource("assertions.lua")!!.toURI().let(::File).readText()
 }
 
-val Any.quoteIfNeeded get() = if (this is String) "\"$this\"" else toString()
+val Any?.quoteIfNeeded get() = when (this) {
+    is String -> "\"$this\""
+    null -> "nil"
+    else -> toString()
+}
 
 fun LuaJTest.runTestScript(
     @Language("lua") snippet: String,

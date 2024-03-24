@@ -4,12 +4,14 @@ import be.bluexin.luajksp.annotations.LuajExclude
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.sample.access.toLua
 import org.intellij.lang.annotations.Language
-import org.junit.jupiter.api.TestInstance
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
-import kotlin.test.*
+import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
 
 // TODO : Cover complex types
 class ReadWriteTypesTest {
@@ -22,7 +24,7 @@ class ReadWriteTypesTest {
         val test = ReadWriteTypesHolder()
 
         @Language("lua")
-        fun assertRead(expected: KProperty0<Any>) =
+        fun assertRead(expected: KProperty0<Any?>) =
             "assert_equals(${expected().quoteIfNeeded}, _t.${expected.name}, \"${expected.name}\")"
 
         LuaJTest.runTestScript(
@@ -45,18 +47,19 @@ class ReadWriteTypesTest {
 
     @Test
     fun `writing any type is ok`() {
-        val test = ReadWriteTypesHolder()
+        val test = ReadWriteTypesHolder(nullableText = UUID.randomUUID().toString())
         val initial = test.copy()
 
         LuaJTest.runTestScript(
             """
                 --- @type ReadWriteTypesHolder
                 local t = testing.testValue
-                _t.text = "newTest"
-                _t.int = _t.int + 3
-                _t.long = _t.long + 3
-                _t.boolean = not _t.boolean
-                _t.double = _t.double + 3
+                t.text = "newTest"
+                t.int = _t.int + 3
+                t.long = _t.long + 3
+                t.boolean = not _t.boolean
+                t.double = _t.double + 3
+                t.nullableText = nil
             """.trimIndent(),
             test.toLua()
         ).executionAsFailure()
@@ -66,18 +69,31 @@ class ReadWriteTypesTest {
         assertEquals(initial.long + 3, test.long)
         assertEquals(!initial.boolean, test.boolean)
         assertEquals(initial.double + 3, test.double)
+        assertEquals(null, test.nullableText)
     }
 
     @Test // Should we allow storing arbitrary data ?
     fun `writing non existing value is nok`() {
-        val test = ReadOnlyTypesTest.ReadOnlyTypesHolder()
+        val test = ReadWriteTypesHolder()
 
         val result = LuaJTest.runTestScript(
             "_t.foobar = 123",
             test.toLua()
         )
         assertIs<ScriptResult.Failure>(result)
-        assertContains(result.errorMessage, "Cannot set foobar on ${ReadOnlyTypesTest.ReadOnlyTypesHolder::class.simpleName}")
+        assertContains(result.errorMessage, "Cannot set foobar on ${ReadWriteTypesHolder::class.simpleName}")
+    }
+
+    @Test
+    fun `writing nil value in non-nullable field is nok`() {
+        val test = ReadWriteTypesHolder()
+
+        val result = LuaJTest.runTestScript(
+            "_t.text = nil",
+            test.toLua()
+        )
+        assertIs<ScriptResult.Failure>(result)
+        assertContains(result.errorMessage, "bad argument: value expected, got nil")
     }
 
     @LuajExpose
@@ -86,7 +102,8 @@ class ReadWriteTypesTest {
         var int: Int = Random.nextInt(-1_000, 1_000),
         var long: Long = Random.nextLong(-10_000_000_000, 10_000_000_000),
         var boolean: Boolean = Random.nextBoolean(),
-        var double: Double = Random.nextDouble()
+        var double: Double = Random.nextDouble(),
+        var nullableText: String? = null,
     ) {
 
         /**
@@ -95,7 +112,7 @@ class ReadWriteTypesTest {
         @LuajExclude
         val fieldRefs
             get() = arrayOf(
-                ::text, ::int, ::long, ::boolean, ::double
+                ::text, ::int, ::long, ::boolean, ::double, ::nullableText
             )
     }
 }
