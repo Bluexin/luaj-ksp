@@ -8,7 +8,7 @@ import com.google.devtools.ksp.*
 import com.google.devtools.ksp.processing.*
 import com.google.devtools.ksp.symbol.*
 
-class LuajSymbolProcessor(
+class LKSymbolProcessor(
     codeGenerator: CodeGenerator,
     private val logger: KSPLogger
 ) : SymbolProcessor {
@@ -23,7 +23,7 @@ class LuajSymbolProcessor(
     private fun processInternal(resolver: Resolver): List<KSAnnotated> = resolver
         .getSymbolsWithAnnotation(LuajExpose::class.qualifiedName!!).filterNot {
             if ((it is KSClassDeclaration) && it.validate()) {
-                it.accept(LuajVisitor.LuajInternalVisitor(it.expose!!, logger), mutableMapOf())
+                it.accept(LKVisitor.Internal(it.expose!!, logger), mutableMapOf())
                     .also { props -> kotlinGen.generate(it as KSDeclaration, props) }
                     .also { props -> luaGen.generate(it as KSDeclaration, props) }
                 true
@@ -33,7 +33,7 @@ class LuajSymbolProcessor(
     private fun processExternal(resolver: Resolver): List<KSAnnotated> = resolver
         .getSymbolsWithAnnotation(LuajExposeExternal::class.qualifiedName!!).filterNot {
             if ((it is KSTypeAlias) && it.validate()) {
-                it.accept(LuajVisitor.LuajExternalVisitor(it.exposeExternal!!, logger), mutableMapOf())
+                it.accept(LKVisitor.External(it.exposeExternal!!, logger), mutableMapOf())
                     .also { props -> kotlinGen.generate(it as KSDeclaration, props) }
                     .also { props -> luaGen.generate(it as KSDeclaration, props) }
                 true
@@ -41,7 +41,7 @@ class LuajSymbolProcessor(
         }.toList()
 
     class Provider : SymbolProcessorProvider {
-        override fun create(environment: SymbolProcessorEnvironment) = LuajSymbolProcessor(
+        override fun create(environment: SymbolProcessorEnvironment) = LKSymbolProcessor(
             environment.codeGenerator, environment.logger
         )
     }

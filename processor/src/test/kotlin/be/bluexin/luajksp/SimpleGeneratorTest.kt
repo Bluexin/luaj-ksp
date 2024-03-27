@@ -2,14 +2,12 @@ package be.bluexin.luajksp
 
 import com.tschuchort.compiletesting.*
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
-import org.jetbrains.kotlin.config.JvmTarget
 import org.luaj.vm2.LuaUserdata
-import org.luaj.vm2.LuaValue
 import java.util.UUID
 import kotlin.test.*
 
 @OptIn(ExperimentalCompilerApi::class)
-class SimpleGeneratorTest : LuajSymbolProcessorTest() {
+class SimpleGeneratorTest : LKSymbolProcessorTest() {
 
     @Test
     fun `test simple kotlin processing`() {

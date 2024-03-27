@@ -7,7 +7,7 @@ import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.*
 import com.google.devtools.ksp.visitor.KSEmptyVisitor
 
-internal sealed class LuajVisitor(
+internal sealed class LKVisitor(
     protected val logger: KSPLogger
 ) : KSEmptyVisitor<MutableMap<String, PropertyLike>, Map<String, PropertyLike>>() {
     protected var rootDeclaration: KSDeclaration? = null
@@ -56,19 +56,19 @@ internal sealed class LuajVisitor(
         return data
     }
 
-    class LuajInternalVisitor(
+    class Internal(
         private val expose: LuajExpose,
         logger: KSPLogger
-    ) : LuajVisitor(logger) {
+    ) : LKVisitor(logger) {
 
         override val KSPropertyDeclaration.include: Boolean
-            get() = when (this@LuajInternalVisitor.expose.includeType) {
+            get() = when (this@Internal.expose.includeType) {
                 LuajExpose.IncludeType.OPT_IN -> exclude == null && expose != null
                 LuajExpose.IncludeType.OPT_OUT -> exclude == null
             }
 
         override val KSFunctionDeclaration.include: Boolean
-            get() = when (this@LuajInternalVisitor.expose.includeType) {
+            get() = when (this@Internal.expose.includeType) {
                 LuajExpose.IncludeType.OPT_IN -> exclude == null && expose != null
                 LuajExpose.IncludeType.OPT_OUT -> exclude == null
             }
@@ -85,16 +85,16 @@ internal sealed class LuajVisitor(
         }
     }
 
-    class LuajExternalVisitor(
+    class External(
         private val expose: LuajExposeExternal,
         logger: KSPLogger
-    ) : LuajVisitor(logger) {
+    ) : LKVisitor(logger) {
 
         override val KSPropertyDeclaration.include: Boolean
-            get() = simpleName.asString() in this@LuajExternalVisitor.expose.whitelist
+            get() = simpleName.asString() in this@External.expose.whitelist
 
         override val KSFunctionDeclaration.include: Boolean
-            get() = simpleName.asString() in this@LuajExternalVisitor.expose.whitelist
+            get() = simpleName.asString() in this@External.expose.whitelist
 
         override fun visitTypeAlias(
             typeAlias: KSTypeAlias,

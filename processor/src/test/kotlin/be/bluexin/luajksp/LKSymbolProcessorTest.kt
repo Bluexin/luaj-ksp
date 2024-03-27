@@ -7,12 +7,12 @@ import org.junit.jupiter.api.assertDoesNotThrow
 import kotlin.reflect.full.primaryConstructor
 
 @OptIn(ExperimentalCompilerApi::class)
-abstract class LuajSymbolProcessorTest {
+abstract class LKSymbolProcessorTest {
 
     protected fun compile(vararg sources: SourceFile)  = KotlinCompilation().apply {
         this.sources = sources.toList()
         jvmTarget = JvmTarget.JVM_17.description
-        symbolProcessorProviders = listOf(LuajSymbolProcessor.Provider())
+        symbolProcessorProviders = listOf(LKSymbolProcessor.Provider())
         inheritClassPath = true
         messageOutputStream = System.out // see diagnostics in real time
         kspWithCompilation = true

@@ -6,14 +6,12 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.assertThrows
 import org.luaj.vm2.LuaError
-import org.luaj.vm2.LuaNumber
 import org.luaj.vm2.LuaUserdata
 import org.luaj.vm2.LuaValue
-import kotlin.reflect.full.primaryConstructor
 import kotlin.test.*
 
 @OptIn(ExperimentalCompilerApi::class)
-class StructureTest : LuajSymbolProcessorTest() {
+class StructureTest : LKSymbolProcessorTest() {
 
     @Test
     fun `non annotated nested class should not be included`() {
