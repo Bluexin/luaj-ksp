@@ -166,10 +166,6 @@ class ReadWriteTypesTest {
         assertEquals(5, test.sum(2, 3))
     }
 
-    fun wrap(fn: LuaFunction): (Int, Int) -> Int {
-        return {a, b -> fn.invoke(LuaValue.varargsOf(CoerceJavaToLua.coerce(a), CoerceJavaToLua.coerce(b))).checkint(0)}
-    }
-
     @LuajExpose
     data class ReadWriteTypesHolder(
         var text: String = UUID.randomUUID().toString(),

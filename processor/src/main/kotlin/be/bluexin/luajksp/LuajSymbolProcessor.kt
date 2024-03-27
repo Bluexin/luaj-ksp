@@ -25,7 +25,9 @@ class LuajSymbolProcessor(
         val remaining = symbols.filter { !it.validate() }.toList()
 
         symbols.filter { (it is KSClassDeclaration) && it.validate() }.forEach {
-            it.accept(LuajInternalVisitor(it.expose!!), Unit)
+            val visitor = LuajInternalVisitor(it.expose!!)
+            it.accept(visitor, Unit)
+            visitor.writeFiles()
         }
 
         return remaining
@@ -36,7 +38,9 @@ class LuajSymbolProcessor(
         val remaining = symbols.filter { !it.validate() }.toList()
 
         symbols.filter { (it is KSTypeAlias) && it.validate() }.forEach {
-            it.accept(LuajExternalVisitor(it.exposeExternal!!), Unit)
+            val visitor = LuajExternalVisitor(it.exposeExternal!!)
+            it.accept(visitor, Unit)
+            visitor.writeFiles()
         }
 
         return remaining
@@ -53,6 +57,8 @@ class LuajSymbolProcessor(
 
     @OptIn(KspExperimental::class)
     private abstract inner class LuajVisitor : KSVisitorVoid() {
+        protected var rootDeclaration: KSDeclaration? = null
+        protected var hasVisitedClass = false
         private val properties = mutableMapOf<String, PropertyLike>()
         private fun addPropertyLike(new: PropertyLike) {
             properties.compute(new.simpleName) { _, existing ->
@@ -61,6 +67,8 @@ class LuajSymbolProcessor(
         }
 
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
+            if (hasVisitedClass) return
+            else hasVisitedClass = true
             classDeclaration.declarations.forEach { it.accept(this, data) }
         }
 
@@ -328,6 +336,15 @@ class LuajSymbolProcessor(
         abstract val KSPropertyDeclaration.include: Boolean
         abstract val KSFunctionDeclaration.include: Boolean
 
+        fun writeFiles() {
+            val rootDeclaration = this.rootDeclaration
+            if (rootDeclaration == null) logger.error("No root declaration set !")
+            else {
+                generateKotlin(rootDeclaration)
+                generateLua(rootDeclaration)
+            }
+        }
+
         override fun visitPropertySetter(setter: KSPropertySetter, data: Unit) {
             logger.logging("Visiting setter $setter")
             setter.expose?.let { expose ->
@@ -356,15 +373,16 @@ class LuajSymbolProcessor(
             }
 
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
+            if (rootDeclaration != null) return
             logger.logging("Visiting $classDeclaration")
-            super.visitClassDeclaration(classDeclaration, data)
 
-            generateKotlin(classDeclaration)
-            generateLua(classDeclaration)
+            rootDeclaration = classDeclaration
+            super.visitClassDeclaration(classDeclaration, data)
         }
     }
 
     private inner class LuajExternalVisitor(private val expose: LuajExposeExternal) : LuajVisitor() {
+
         override val KSPropertyDeclaration.include: Boolean
             get() = simpleName.asString() in this@LuajExternalVisitor.expose.whitelist
 
@@ -372,11 +390,11 @@ class LuajSymbolProcessor(
             get() = simpleName.asString() in this@LuajExternalVisitor.expose.whitelist
 
         override fun visitTypeAlias(typeAlias: KSTypeAlias, data: Unit) {
+            if (rootDeclaration != null) return
             logger.warn("Visiting $typeAlias")
-            typeAlias.type.resolve().declaration.accept(this, data)
 
-            generateKotlin(typeAlias)
-            generateLua(typeAlias)
+            rootDeclaration = typeAlias
+            typeAlias.type.resolve().declaration.accept(this, data)
         }
     }
 
@@ -490,6 +508,6 @@ private object LuaUserdataFQN : KSName {
 
 private class AccessClassFQN(private val originalFQN: KSDeclaration) : KSName {
     override fun asString() = "${getQualifier()}.${getShortName()}"
-    override fun getQualifier() = "${originalFQN.packageName.asString()}.access"
+    override fun getQualifier() = "${(originalFQN.packageName.asString().takeIf(String::isNotEmpty)?.let { "$it." }).orEmpty()}access"
     override fun getShortName() = "${originalFQN.simpleName.getShortName()}Access"
 }

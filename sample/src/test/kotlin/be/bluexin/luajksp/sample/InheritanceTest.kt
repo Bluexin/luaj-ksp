@@ -36,5 +36,8 @@ class InheritanceTest {
     @LuajExpose
     abstract class ParentClass(
         var name: String
-    )
+    ) {
+
+        class ShouldBeHiddenClass
+    }
 }
