@@ -4,10 +4,9 @@ import com.tschuchort.compiletesting.*
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.jetbrains.kotlin.config.JvmTarget
 import org.luaj.vm2.LuaUserdata
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.luaj.vm2.LuaValue
+import java.util.UUID
+import kotlin.test.*
 
 @OptIn(ExperimentalCompilerApi::class)
 class SimpleGeneratorTest : LuajSymbolProcessorTest() {
@@ -36,6 +35,40 @@ class SimpleGeneratorTest : LuajSymbolProcessorTest() {
         assertTrue(accessClazz.declaredMethods.any { it.name == "get" })
         assertTrue(accessClazz.declaredMethods.any { it.name == "set" })
         assertTrue(LuaUserdata::class.java.isAssignableFrom(accessClazz))
+    }
+
+    @Test
+    fun `test reference to typealias processing`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LuajExposeExternal
+
+                    @LuajExposeExternal("getMostSignificantBits", "getLeastSignificantBits")
+                    typealias ExposedUUID = java.util.UUID
+
+                    @LuajExpose
+                    class KClass(var uuid: ExposedUUID)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        val uuid = UUID.randomUUID()
+        val instance = result.instance("KClass", uuid)
+        val access = result.instance("access.KClassAccess", instance)
+
+        assertIs<LuaUserdata>(access)
+        val foundUuidAccess = access.get("uuid")
+        assertIs<LuaUserdata>(foundUuidAccess)
+        assertEquals(uuid.toString(), foundUuidAccess.tojstring())
+        assertEquals(uuid.leastSignificantBits.toDouble(), foundUuidAccess.get("leastSignificantBits").checkdouble())
+        assertEquals(uuid.mostSignificantBits.toDouble(), foundUuidAccess.get("mostSignificantBits").checkdouble())
     }
 
     @Test

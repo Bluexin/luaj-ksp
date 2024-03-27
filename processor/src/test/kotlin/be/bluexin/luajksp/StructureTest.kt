@@ -76,13 +76,9 @@ class StructureTest : LuajSymbolProcessorTest() {
         assertDoesNotThrow {
             result.classLoader.loadClass("access.KClassAccess")
         }
-        val accessClazz = assertDoesNotThrow {
-            result.classLoader.loadClass("access.${nestedClassName}Access").kotlin
-        }
-        val clazz = result.classLoader.loadClass("KClass$$nestedClassName").kotlin
 
-        val instance = clazz.primaryConstructor!!.call(42, 420)
-        val access = accessClazz.primaryConstructor!!.call(instance)
+        val instance = result.instance("KClass$$nestedClassName", 42, 420)
+        val access = result.instance("access.${nestedClassName}Access", instance)
 
         assertIs<LuaUserdata>(access)
         assertEquals(LuaValue.valueOf(42), access.get("foo"))
