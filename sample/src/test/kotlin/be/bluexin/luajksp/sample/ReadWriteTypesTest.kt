@@ -136,7 +136,7 @@ class ReadWriteTypesTest {
             test.toLua()
         )
         assertIs<ScriptResult.Failure>(result)
-        assertContains(result.errorMessage, "bad argument: value expected, got nil")
+        assertContains(result.errorMessage, "bad argument: string expected, got nil")
     }
 
     @Test
@@ -144,7 +144,10 @@ class ReadWriteTypesTest {
         val test = ReadWriteTypesHolder()
 
         LuaJTest.runTestScript(
-            "_t.sum = function(a, b) return a + b end",
+            """
+                _t.sum = function(a, b) return a + b end
+                assert_equals(42, _t.sum(19, 23))
+            """.trimIndent(),
             test.toLua()
         ).executionAsFailure()
 
@@ -159,6 +162,7 @@ class ReadWriteTypesTest {
             """
                 function asum(a, b) return a + b end
                 _t.sum = asum
+                assert_equals(42, _t.sum(19, 23))
             """.trimIndent(),
             test.toLua()
         ).executionAsFailure()

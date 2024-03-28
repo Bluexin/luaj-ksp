@@ -6,6 +6,8 @@ import be.bluexin.luajksp.annotations.LuajExposeExternal
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.symbol.*
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.MemberName.Companion.member
 import java.util.*
 
 @OptIn(KspExperimental::class)
@@ -23,11 +25,22 @@ internal class AccessClassFQN(private val originalFQN: KSDeclaration) : KSName {
     override fun getShortName() = "${originalFQN.simpleName.getShortName()}Access"
 }
 
+internal val KSDeclaration.accessClassName get() = ClassName(
+    (packageName.asString().takeIf(String::isNotEmpty)?.let { "$it." }).orEmpty() + "access",
+    simpleName.getShortName() + "Access"
+)
+
 internal object LuaUserdataFQN : KSName {
     override fun asString() = "${getQualifier()}.${getShortName()}"
     override fun getQualifier() = "org.luaj.vm2"
     override fun getShortName() = "LuaUserdata"
 }
+
+internal val LuaUserdataClassName = ClassName("org.luaj.vm2", "LuaUserdata")
+internal val LuaValueClassName = LuaUserdataClassName.peerClass("LuaValue")
+internal val LuaVarargsOfName = LuaUserdataClassName.member("varargsOf")
+internal val LuaFunctionClassName = LuaUserdataClassName.peerClass("LuaFunction")
+internal val CoerceJavaToLuaName = ClassName("org.luaj.vm2.lib.jse", "CoerceJavaToLua").member("coerce")
 
 internal sealed interface PropertyLike {
     val hasGetter: Boolean

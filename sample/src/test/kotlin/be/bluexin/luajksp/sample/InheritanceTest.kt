@@ -2,10 +2,14 @@ package be.bluexin.luajksp.sample
 
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.sample.access.toLua
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class InheritanceTest {
+
+    @BeforeTest
+    fun reset() = LuaJTest.resetContexts()
 
     @Test
     fun `inheritance access works`() {

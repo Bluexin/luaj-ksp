@@ -1,17 +1,18 @@
 package be.bluexin.luajksp.generators
 
-import be.bluexin.luajksp.AccessClassFQN
-import be.bluexin.luajksp.LuaUserdataFQN
-import be.bluexin.luajksp.PropertyLike
+import be.bluexin.luajksp.*
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.isAnnotationPresent
 import com.google.devtools.ksp.isOpen
 import com.google.devtools.ksp.processing.CodeGenerator
-import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.*
+import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
+import com.squareup.kotlinpoet.ksp.toTypeName
+import com.squareup.kotlinpoet.ksp.writeTo
 import org.intellij.lang.annotations.Language
 import java.io.OutputStream
 
@@ -27,193 +28,256 @@ internal class KotlinAccessGenerator(
     ) {
         val receiverClassName = forDeclaration.simpleName.asString()
 
-        val targetFqn = AccessClassFQN(forDeclaration)
-        val targetClassName = targetFqn.getShortName()
-        val targetPackage = targetFqn.getQualifier()
+        val target = forDeclaration.accessClassName
 
-        val parentClass = (if (forDeclaration is KSClassDeclaration) {
+        val parentName = (if (forDeclaration is KSClassDeclaration) {
             forDeclaration.superTypes
                 .mapNotNull { it.resolve().declaration as? KSClassDeclaration }
                 .singleOrNull {
                     it.classKind == ClassKind.CLASS && it.isAnnotationPresent(LuajExpose::class)
-                }?.let(::AccessClassFQN)
-        } else null) ?: LuaUserdataFQN
+                }?.accessClassName
+        } else null) ?: LuaUserdataClassName
 
-        logger.info("Generating $targetPackage.$targetClassName for $receiverClassName", forDeclaration)
+        logger.info("Generating $target for $receiverClassName", forDeclaration)
         logger.logging("Properties : $properties")
 
-        codeGenerator.createNewFile(
-            Dependencies(true, forDeclaration.containingFile!!),
-            targetPackage,
-            targetClassName
-        ).use { file ->
-            @Suppress("RedundantSuppression", "ConvertToStringTemplate")
-            file.appendKotlin(
-                """
-                package $targetPackage
+        val receiverType = when (forDeclaration) {
+            is KSClassDeclaration -> forDeclaration.asStarProjectedType().toTypeName()
+            is KSTypeAlias -> forDeclaration.type.toTypeName()
 
-                import ${parentClass.asString()}
-                import org.luaj.vm2.LuaValue
-                import org.luaj.vm2.lib.jse.CoerceJavaToLua
-                
-                import ${forDeclaration.qualifiedName?.asString() ?: "ERROR"}
-
-                /**
-                 * Generated with luaj-ksp
-                 */
-                @Suppress("RedundantSuppression", "ConvertToStringTemplate")
-                ${if (forDeclaration.isOpen()) "open " else ""}class $targetClassName(
-                    ${if (parentClass == LuaUserdataFQN) "" else "override "}${if (forDeclaration.isOpen()) "open " else ""}val receiver: $receiverClassName
-                ): ${parentClass.getShortName()}(receiver, /*TODO: figure out metatable?*/) {
-                
-                    override fun set(key: LuaValue, value: LuaValue) {
-                        when (key.checkjstring()) {
-                        ${
-                    properties.values.filter(PropertyLike::hasSetter)
-                        .joinToString(separator = "\n                        ") {
-                            val sn = it.simpleName
-                            """    "$sn" -> receiver.$sn = ${"value".luaValueToKotlin(it)}"""
-                        }
-                }
-                            else -> ${if (parentClass == LuaUserdataFQN) "error(\"Cannot set \$key on $receiverClassName\")" else "super.set(key, value)"} 
-                        }
-                    }
-
-                    override fun get(key: LuaValue): LuaValue = when (key.checkjstring()) {
-                    ${
-                    properties.values.filter(PropertyLike::hasGetter)
-                        .joinToString(separator = "\n                    ") {
-                            "    ${it.javaToLua()}"
-                        }
-                }
-                        else ->  ${if (parentClass == LuaUserdataFQN) "error(\"Cannot get \$key on $receiverClassName\")" else "super.get(key)"}
-                    }
-                }
-
-                fun $receiverClassName.toLua() = $targetClassName(this)
-
-            """.trimIndent()
-            )
+            else -> error("Unknown declaration type: $forDeclaration", forDeclaration)
         }
+
+        val wrapped = PropertySpec.builder("wrapped", receiverType).apply {
+            if (parentName != LuaUserdataClassName) addModifiers(KModifier.OVERRIDE)
+            if (forDeclaration.isOpen()) addModifiers(KModifier.OPEN)
+        }.initializer("wrapped").build()
+
+        val functionWrappers = mutableMapOf<String, KSType>()
+        val setter = FunSpec.builder("set")
+            .addModifiers(KModifier.OVERRIDE)
+            .addParameter("key", LuaValueClassName)
+            .addParameter("value", LuaValueClassName)
+            .beginControlFlow("when (key.checkjstring())").apply {
+                properties.values.filter(PropertyLike::hasSetter).forEach {
+                    addLuaToKotlin(it, wrapped, functionWrappers)
+                }
+                addStatement(
+                    "else -> " +
+                            if (parentName == LuaUserdataClassName) "error(\"Cannot set \$key on \${javaClass.simpleName}\")"
+                            else "super.set(key, value)"
+                )
+            }.endControlFlow().build()
+
+        val frozenFunctionWrappers = functionWrappers.toMap()
+        val getter = FunSpec.builder("get")
+            .addModifiers(KModifier.OVERRIDE)
+            .addParameter("key", LuaValueClassName)
+            .returns(LuaValueClassName)
+            .beginControlFlow("return when (key.checkjstring())").apply {
+                properties.values.filter(PropertyLike::hasGetter).forEach {
+                    addGetProperty(it, wrapped, frozenFunctionWrappers)
+                }
+                addStatement(
+                    "else -> " +
+                            if (parentName == LuaUserdataClassName) "error(\"Cannot get \$key on \${javaClass.simpleName}\")"
+                            else "super.get(key)"
+                )
+            }.endControlFlow().build()
+
+        val accessClass = TypeSpec.classBuilder(target)
+            .addKdoc("Generated with luaj-ksp").apply {
+                if (forDeclaration.isOpen()) addModifiers(KModifier.OPEN)
+            }.superclass(parentName)
+            .addSuperclassConstructorParameter(wrapped.name)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter(wrapped.name, wrapped.type)
+                    .build()
+            ).addProperty(wrapped)
+            .addFunctions(listOf(getter, setter)).apply {
+                frozenFunctionWrappers.forEach { (name, type) ->
+                    this.addFunctionWrapper(name, type, wrapped, frozenFunctionWrappers)
+                }
+            }.addOriginatingKSFile(forDeclaration.containingFile!!)
+            .build()
+
+        FileSpec.builder(target)
+            .indent("    ")
+            .addType(accessClass)
+            .addFunction(
+                FunSpec.builder("toLua")
+                    .receiver(receiverType)
+                    .returns(target)
+                    .addStatement("return %T(this)", target)
+                    .build()
+            ).build()
+            .writeTo(codeGenerator, true)
     }
 
-    private fun String.luaValueToKotlin(prop: PropertyLike): String =
-        luaValueToKotlin(prop.type) ?: prop.unsupportedTypeError()
+    private val KSType.functionWrapperName
+        get() =
+            this.declaration.simpleName.getShortName() + arguments.joinToString(separator = "") {
+                it.type!!.resolve().declaration.simpleName.getShortName()
+            } + "Wrapper"
 
-    private fun String.luaValueToKotlin(typeRef: KSTypeReference): String? {
-        val type = typeRef.resolve()
-        val receiver = if (type.nullability == Nullability.NOT_NULL) "$this.checknotnil()" else this
-        logger.logging("Processing $typeRef (resolved to `$type`) for $this", typeRef)
-        return buildString {
-            if (type.nullability == Nullability.NULLABLE) append("if (${this@luaValueToKotlin}.isnil()) null else ")
-
-            when (typeRef.toString()) {
-                "String" -> append(receiver).append(".checkjstring()")
-                "Int" -> append(receiver).append(".checkint()")
-                "Long" -> append(receiver).append(".checklong()")
-                "Boolean" -> append(receiver).append(".checkboolean()")
-                "Double" -> append(receiver).append(".checkdouble()")
-                else -> {
-                    if (type.isFunctionType) luaFunctionToKotlin(type, receiver, typeRef)
-                    else {
-                        val typeDeclaration = type.declaration
-                        if (typeDeclaration.isExposed || typeRef.isExposed) {
-                            val typeFqn = typeDeclaration.accessFqn
-                            append('(')
-                            append(receiver)
-                            append(".checkuserdata(")
-                            append(typeFqn)
-                            append("::class.java) as ")
-                            append(typeFqn)
-                            append(").receiver")
-                        } else return null
-                    }
-                }
-            }
-        }
-    }
-
-    private fun StringBuilder.luaFunctionToKotlin(
-        type: KSType,
-        receiver: String,
-        typeRef: KSTypeReference
+    private fun FunSpec.Builder.addLuaToKotlin(
+        it: PropertyLike,
+        wrapped: PropertySpec,
+        functionWrappers: MutableMap<String, KSType>
     ) {
-        logger.warn("Found function type $type")
-        append(receiver)
-        logger.warn("Decl : ${type.declaration}")
-        logger.warn("Args : ${type.arguments}")
-        append(".checkfunction()")
-        append(".let { fn -> { ")
-        val args = type.arguments.take(type.arguments.size - 1) // removing return type
-        args.forEachIndexed { index, arg ->
-            append("arg")
-            append(index)
-            if (index < args.size - 1) append(", ")
-        }
-        if (args.isNotEmpty()) append(" -> ")
-        val lambda = buildString {
-            append("fn.invoke(")
-            if (args.isNotEmpty()) {
-                append("LuaValue.varargsOf(")
-                args.forEachIndexed { index, arg ->
-                    val argType =
-                        arg.type ?: error("Unable to resolve type of arg\$$index of Function type $type", typeRef)
-                    append(argType.javaToLua("arg$index"))
-                    if (index < args.size - 1) append(", ")
-                }
-                append(')')
-            }
-            append(").arg(1)") // single return value
-        }
-        append(
-            lambda.luaValueToKotlin(
-                args.last().type ?: error("Unable to resolve return type of Function type $type", typeRef)
-            )
-        )
-        append(" } }")
+        val typeRef = it.type
+        val type = typeRef.resolve()
+        logger.logging("Processing $typeRef (resolved to `$type`) for $this", typeRef)
+
+        val (call, extras) = luaToKotlin("value", type, wrapped, functionWrappers)
+
+        addStatement("%S -> %N.%L = $call", it.simpleName, wrapped, it.simpleName, *extras.toTypedArray())
     }
 
-    private fun PropertyLike.javaToLua(): String {
-        val j2l = type.javaToLua("receiver.$simpleName") ?: unsupportedTypeError()
-        return "\"$simpleName\" -> $j2l"
-    }
+    private fun luaToKotlin(
+        receiver: String,
+        type: KSType,
+        wrapped: PropertySpec,
+        functionWrappers: Map<String, KSType>
+    ): Pair<String, List<Any>> {
+        val extras = mutableListOf<Any>(receiver)
+        val nullability = if (type.nullability == Nullability.NULLABLE) {
+            extras += receiver
+            "if (%L.isnil()) null else "
+        } else ""
+        val call = when (type.declaration.simpleName.getShortName()) {
+            "String" -> "%L.checkjstring()"
+            "Int" -> "%L.checkint()"
+            "Long" -> "%L.checklong()"
+            "Boolean" -> "%L.checkboolean()"
+            "Double" -> "%L.checkdouble()"
 
-    private fun KSTypeReference.javaToLua(receiver: String): String? {
-        return when (toString()) {
-            "String", "Int", "Long", "Boolean", "Double" -> "CoerceJavaToLua.coerce($receiver)"
             else -> {
-                val type = resolve()
                 if (type.isFunctionType) {
-                    logger.warn("Found function type", this)
-                    "TODO()"
+                    logger.warn("Found function type", type.declaration)
+                    if (functionWrappers is MutableMap) {
+                        val wrapperName = type.functionWrapperName
+                        functionWrappers[wrapperName] = type
+                        extras.clear()
+                        extras += wrapperName
+                        extras += receiver
+                        "%N(%L.checkfunction())"
+                    } else error("Functions frozen", type.declaration)
                 } else {
                     val typeDeclaration = type.declaration
-                    if (typeDeclaration.isExposed || this.isExposed) "${typeDeclaration.accessFqn}($receiver)"
-                    else null
+                    if (typeDeclaration.isExposed) {
+                        extras += typeDeclaration.accessClassName
+                        extras += typeDeclaration.accessClassName
+                        extras += wrapped
+                        "(%L.checkuserdata(%T::class.java) as %T).%N"
+                    } else type.unsupportedTypeError()
                 }
             }
         }
+
+        return "$nullability$call" to extras
+    }
+
+    // TODO : support receiver function ?
+    private fun TypeSpec.Builder.addFunctionWrapper(name: String, type: KSType, wrapped: PropertySpec, functionWrappers: Map<String, KSType>) {
+        val luaFunction = PropertySpec.builder("luaFunction", LuaFunctionClassName)
+            .initializer("luaFunction")
+            .build()
+
+        addType(
+            TypeSpec.classBuilder(name)
+                .addModifiers(KModifier.PRIVATE)
+                .addSuperinterface(type.toTypeName())
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter(luaFunction.name, luaFunction.type)
+                        .build()
+                )
+                .addProperty(luaFunction)
+                .addFunction(
+                    FunSpec.builder("invoke")
+                        .addModifiers(KModifier.OVERRIDE)
+                        .returns(type.arguments.last().toTypeName()).apply {
+                            val args = type.arguments.take(type.arguments.size - 1) // removing return type
+                            val luaArgs = mutableListOf<String>()
+                            args.forEachIndexed { index, arg ->
+                                addParameter("arg$index", arg.toTypeName())
+                                val (call, extras) = kotlinToLua("arg$index", arg.type!!.resolve(), functionWrappers)
+                                val luaArg = "luaArg$index"
+                                luaArgs += luaArg
+                                addStatement("val $luaArg = $call", *extras.toTypedArray())
+                            }
+
+                            addStatement(
+                                "val ret = %N.invoke(%M(arrayOf(${luaArgs.joinToString()}))).arg1()",
+                                luaFunction, LuaVarargsOfName,
+                            )
+
+                            val (retCall, extras) = luaToKotlin("ret", type.arguments.last().type!!.resolve(), wrapped, functionWrappers)
+
+                            addStatement("return $retCall", *extras.toTypedArray())
+                        }.build()
+                ).build()
+        )
+    }
+
+    private fun FunSpec.Builder.addGetProperty(
+        it: PropertyLike,
+        wrapped: PropertySpec,
+        functionWrappers: Map<String, KSType>
+    ) {
+        val (call, extras) = kotlinToLua("${wrapped.name}.${it.simpleName}", it.type.resolve(), functionWrappers)
+        addStatement("%S -> $call", it.simpleName, *extras.toTypedArray())
+    }
+
+    // TODO : add a way to define arbitrary (code-driven) mapping
+    private fun kotlinToLua(
+        receiver: String,
+        type: KSType,
+        functionWrappers: Map<String, KSType>
+    ): Pair<String, List<Any>> {
+        val extras = mutableListOf<Any>()
+        val call = when (type.declaration.simpleName.getShortName()) {
+            "String", "Int", "Long", "Boolean", "Double" -> {
+                extras += CoerceJavaToLuaName
+                extras += receiver
+                "%M(%L)"
+            }
+
+            else -> {
+                if (type.isFunctionType) {
+                    logger.warn("Found function type", type.declaration)
+                    val wrapperName = type.functionWrapperName
+                    if (wrapperName in functionWrappers) {
+                        extras += receiver
+                        extras += wrapperName
+                        extras += "Exposing pure KFunction to lua is not yet implemented"
+                        "(%L as? %N)?.luaFunction ?: error(%S)"
+                    } else {
+                        extras += MemberName("kotlin", "TODO")
+                        extras += "No wrapper found for $type (expected $wrapperName)"
+                        "%M(%S)"
+                    }
+                } else {
+                    val typeDeclaration = type.declaration
+                    if (typeDeclaration.isExposed) {
+                        extras += typeDeclaration.accessClassName
+                        extras += receiver
+                        "%T(%L)"
+                    } else type.unsupportedTypeError()
+                }
+            }
+        }
+
+        return call to extras
     }
 
     private val KSAnnotated.isExposed
         get() = isAnnotationPresent(LuajExpose::class) ||
                 isAnnotationPresent(LuajExposeExternal::class)
 
-    private val KSDeclaration.accessFqn
-        get() = buildString {
-            packageName.asString().takeIf(String::isNotEmpty)?.let {
-                append(it)
-                append('.')
-            }
-            append("access.")
-            append(simpleName.asString())
-            append("Access")
-        }
-
-    private fun PropertyLike.unsupportedTypeError(): Nothing = error(
-        "Unsupported type for ${this.parentDeclaration}.${this.simpleName}: $type (${type.resolve()})",
-        source
-    )
+    private fun KSType.unsupportedTypeError(): Nothing = error("Unsupported type $this", declaration)
 
     private fun error(message: String, at: KSNode): Nothing {
         logger.error(message, at)

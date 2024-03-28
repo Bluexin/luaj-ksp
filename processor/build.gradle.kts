@@ -16,6 +16,7 @@ repositories {
 dependencies {
     implementation(project(":luaj-ksp-annotations"))
     implementation("com.google.devtools.ksp:symbol-processing-api:1.9.23-1.0.19")
+    implementation("com.squareup:kotlinpoet-ksp:1.16.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("dev.zacsweers.kctfork:ksp:0.4.1")
     testImplementation("com.github.wagyourtail.luaj:luaj-jse:05e2b7d76a")

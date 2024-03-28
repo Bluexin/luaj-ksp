@@ -6,10 +6,14 @@ import be.bluexin.luajksp.sample.access.toLua
 import org.junit.jupiter.api.assertThrows
 import org.luaj.vm2.LuaError
 import java.util.*
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
 class AnnotationPriorityTest {
+
+    @BeforeTest
+    fun reset() = LuaJTest.resetContexts()
 
     @Test
     fun `a property with both Expose and Exclude is excluded`() {

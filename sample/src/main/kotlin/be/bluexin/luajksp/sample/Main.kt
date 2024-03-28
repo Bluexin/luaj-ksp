@@ -32,7 +32,7 @@ fun main() {
 
 @LuajExpose
 data class TestWrapper(
-    @LuajExpose
+//    @LuajExpose
     var test: Test
 )
 
