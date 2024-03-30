@@ -3,11 +3,11 @@ package be.bluexin.luajksp.generators
 import be.bluexin.luajksp.*
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
-import com.google.devtools.ksp.KspExperimental
-import com.google.devtools.ksp.isAnnotationPresent
-import com.google.devtools.ksp.isOpen
+import be.bluexin.luajksp.annotations.LuajMapped
+import com.google.devtools.ksp.*
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.KSPLogger
+import com.google.devtools.ksp.processing.Resolver
 import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
@@ -19,7 +19,8 @@ import java.io.OutputStream
 @OptIn(KspExperimental::class)
 internal class KotlinAccessGenerator(
     private val codeGenerator: CodeGenerator,
-    private val logger: KSPLogger
+    private val logger: KSPLogger,
+    private val resolver: Resolver
 ) {
 
     fun generate(
@@ -146,7 +147,22 @@ internal class KotlinAccessGenerator(
             extras += receiver
             "if (%L.isnil()) null else "
         } else ""
-        val call = when (type.declaration.simpleName.getShortName()) {
+
+        val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
+            it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
+                .qualifiedName?.asString() == LuajMapped::class.qualifiedName
+        }
+        val call = if (customMapper != null) {
+            val mapper  = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
+            extras.clear()
+            extras += mapper.toTypeName()
+            extras += receiver
+            when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
+                ClassKind.OBJECT -> "%T.fromLua(%L.checknotnil())"
+                ClassKind.CLASS -> "%T().fromLua(%L.checknotnil())"
+                else -> error("Unsupported class kind : $ck", customMapper)
+            }
+        } else when (type.declaration.simpleName.getShortName()) {
             "String" -> "%L.checkjstring()"
             "Int" -> "%L.checkint()"
             "Long" -> "%L.checklong()"
@@ -238,7 +254,22 @@ internal class KotlinAccessGenerator(
         functionWrappers: Map<String, KSType>
     ): Pair<String, List<Any>> {
         val extras = mutableListOf<Any>()
-        val call = when (type.declaration.simpleName.getShortName()) {
+
+        val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
+            it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
+                .qualifiedName?.asString() == LuajMapped::class.qualifiedName
+        }
+        val call = if (customMapper != null) {
+            val mapper  = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
+            extras.clear()
+            extras += mapper.toTypeName()
+            extras += receiver
+            when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
+                ClassKind.OBJECT -> "%T.toLua(%L)"
+                ClassKind.CLASS -> "%T().toLua(%L)"
+                else -> error("Unsupported class kind : $ck", customMapper)
+            }
+        } else when (type.declaration.simpleName.getShortName()) {
             "String", "Int", "Long", "Boolean", "Double" -> {
                 extras += CoerceJavaToLuaName
                 extras += receiver

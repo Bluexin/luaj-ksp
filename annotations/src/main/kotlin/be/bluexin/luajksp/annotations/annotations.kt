@@ -1,5 +1,7 @@
 package be.bluexin.luajksp.annotations
 
+import kotlin.reflect.KClass
+
 /**
  * Mark a class, property or function for exposition to LuaJ.
  */
@@ -44,4 +46,14 @@ annotation class LuajExposeExternal(
      * Whitelist of properties to expose
      */
     vararg val whitelist: String
+)
+
+/**
+ * Marker for custom mapping.
+ * When defined on a class or typealias, usages of that type will use the specified [mapper].
+ */
+@Retention(AnnotationRetention.RUNTIME) // TODO : don't forget to test on TYPE
+@Target(AnnotationTarget.TYPEALIAS, AnnotationTarget.CLASS, AnnotationTarget.TYPE)
+annotation class LuajMapped(
+    val mapper: KClass<out LKMapper<*>>
 )
