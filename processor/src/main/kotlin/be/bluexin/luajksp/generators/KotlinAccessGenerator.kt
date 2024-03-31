@@ -230,9 +230,13 @@ internal class KotlinAccessGenerator(
                                 luaFunction, LuaVarargsOfName,
                             )
 
-                            val (retCall, extras) = luaToKotlin("ret", type.arguments.last().type!!.resolve(), wrapped, functionWrappers)
+                            val returnType = type.arguments.last().type!!.resolve()
 
-                            addStatement("return $retCall", *extras.toTypedArray())
+                            if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement("return Unit")
+                            else {
+                                val (retCall, extras) = luaToKotlin("ret", returnType, wrapped, functionWrappers)
+                                addStatement("return $retCall", *extras.toTypedArray())
+                            }
                         }.build()
                 ).build()
         )
