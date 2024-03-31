@@ -1,14 +1,21 @@
 package be.bluexin.luajksp.generators
 
 import be.bluexin.luajksp.PropertyLike
+import be.bluexin.luajksp.accessClassName
+import be.bluexin.luajksp.annotations.LuajExpose
+import com.google.devtools.ksp.KspExperimental
+import com.google.devtools.ksp.isAnnotationPresent
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.KSPLogger
+import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSDeclaration
 import com.google.devtools.ksp.symbol.KSTypeReference
 import org.intellij.lang.annotations.Language
 import java.io.OutputStream
 
+@OptIn(KspExperimental::class)
 internal class LuaTypingGenerator(
     private val codeGenerator: CodeGenerator,
     private val logger: KSPLogger
@@ -31,7 +38,13 @@ internal class LuaTypingGenerator(
             file.appendLua(
                 """--- Generated with luaj-ksp
                 |--- ${forDeclaration.docString.kdocToLDoc("    ")}
-                |--- @class $targetClassName
+                |--- @class $targetClassName${(if (forDeclaration is KSClassDeclaration) {
+                    forDeclaration.superTypes
+                        .mapNotNull { it.resolve().declaration as? KSClassDeclaration }
+                        .singleOrNull {
+                            it.classKind == ClassKind.CLASS && it.isAnnotationPresent(LuajExpose::class)
+                        }?.simpleName?.getShortName()?.takeIf(String::isNotBlank)?.let { ": $it" } ?: ""
+                } else "")}
                 |$targetClassName = {${
                     properties.values.joinToString(separator = ",\n") {
                         """

@@ -19,8 +19,7 @@ import java.io.OutputStream
 @OptIn(KspExperimental::class)
 internal class KotlinAccessGenerator(
     private val codeGenerator: CodeGenerator,
-    private val logger: KSPLogger,
-    private val resolver: Resolver
+    private val logger: KSPLogger
 ) {
 
     fun generate(

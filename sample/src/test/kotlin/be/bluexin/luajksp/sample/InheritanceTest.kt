@@ -18,7 +18,7 @@ class InheritanceTest {
 
         LuaJTest.runTestScript(
             """
-                --- @type ChildClass | ParentClass
+                --- @type ChildClass
                 local t = testing.testValue
                 assert_equals(${test.age.quoteIfNeeded}, t.age, "age")
                 assert_equals(${test.name.quoteIfNeeded}, t.name, "name")
@@ -40,8 +40,5 @@ class InheritanceTest {
     @LuajExpose
     abstract class ParentClass(
         var name: String
-    ) {
-
-        class ShouldBeHiddenClass
-    }
+    )
 }
