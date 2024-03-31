@@ -2,6 +2,7 @@ package be.bluexin.luajksp
 
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
+import com.google.devtools.ksp.isConstructor
 import com.google.devtools.ksp.isPublic
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.*
@@ -9,14 +10,14 @@ import com.google.devtools.ksp.visitor.KSEmptyVisitor
 
 internal sealed class LKVisitor(
     protected val logger: KSPLogger
-) : KSEmptyVisitor<MutableMap<String, PropertyLike>, Map<String, PropertyLike>>() {
+) : KSEmptyVisitor<MutableMap<String, ExposedData>, Map<String, ExposedData>>() {
     protected var rootDeclaration: KSDeclaration? = null
     private var hasVisitedClass = false
 
     override fun visitClassDeclaration(
         classDeclaration: KSClassDeclaration,
-        data: MutableMap<String, PropertyLike>
-    ): Map<String, PropertyLike> {
+        data: MutableMap<String, ExposedData>
+    ): Map<String, ExposedData> {
         if (hasVisitedClass) return data
         else hasVisitedClass = true
         classDeclaration.declarations.forEach { it.accept(this, data) }
@@ -25,23 +26,23 @@ internal sealed class LKVisitor(
 
     override fun visitFunctionDeclaration(
         function: KSFunctionDeclaration,
-        data: MutableMap<String, PropertyLike>
-    ): Map<String, PropertyLike> {
+        data: MutableMap<String, ExposedData>
+    ): Map<String, ExposedData> {
         logger.logging("Visiting fn $function")
         if (function.include) {
-            // TODO : handle non property-like functions
-            PropertyLike.FromKSFunctions.fromFunction(function)
-                ?.let(data::addPropertyLike)
+            (ExposedPropertyLike.FromKSFunctions.fromFunction(function)
+                ?: ExposedFunction(function))
+                .let(data::addExposed)
         }
         return data
     }
 
     override fun visitPropertyDeclaration(
         property: KSPropertyDeclaration,
-        data: MutableMap<String, PropertyLike>
-    ): Map<String, PropertyLike> {
+        data: MutableMap<String, ExposedData>
+    ): Map<String, ExposedData> {
         logger.logging("Visiting property $property")
-        if (property.isPublic() && property.include) data.addPropertyLike(PropertyLike.FromKSProperty(property))
+        if (property.isPublic() && property.include) data.addExposed(ExposedPropertyLike.FromKSProperty(property))
         return data
     }
 
@@ -50,8 +51,8 @@ internal sealed class LKVisitor(
 
     override fun defaultHandler(
         node: KSNode,
-        data: MutableMap<String, PropertyLike>
-    ): Map<String, PropertyLike> {
+        data: MutableMap<String, ExposedData>
+    ): Map<String, ExposedData> {
         logger.logging("Visiting $node")
         return data
     }
@@ -69,14 +70,14 @@ internal sealed class LKVisitor(
 
         override val KSFunctionDeclaration.include: Boolean
             get() = when (this@Internal.expose.includeType) {
-                LuajExpose.IncludeType.OPT_IN -> exclude == null && expose != null
-                LuajExpose.IncludeType.OPT_OUT -> exclude == null
+                LuajExpose.IncludeType.OPT_IN -> !isConstructor() && exclude == null && expose != null
+                LuajExpose.IncludeType.OPT_OUT -> !isConstructor() && exclude == null
             }
 
         override fun visitClassDeclaration(
             classDeclaration: KSClassDeclaration,
-            data: MutableMap<String, PropertyLike>
-        ): Map<String, PropertyLike> {
+            data: MutableMap<String, ExposedData>
+        ): Map<String, ExposedData> {
             if (rootDeclaration != null) return data
             logger.logging("Visiting $classDeclaration")
 
@@ -98,8 +99,8 @@ internal sealed class LKVisitor(
 
         override fun visitTypeAlias(
             typeAlias: KSTypeAlias,
-            data: MutableMap<String, PropertyLike>
-        ): Map<String, PropertyLike> {
+            data: MutableMap<String, ExposedData>
+        ): Map<String, ExposedData> {
             if (rootDeclaration != null) return data
             logger.logging("Visiting $typeAlias")
             if (expose.whitelist.isEmpty()) logger.warn("Empty ${LuajExposeExternal::class.simpleName} whitelist, is this intended ?")
@@ -110,7 +111,7 @@ internal sealed class LKVisitor(
     }
 }
 
-private fun MutableMap<String, PropertyLike>.addPropertyLike(new: PropertyLike) {
+private fun MutableMap<String, ExposedData>.addExposed(new: ExposedData) {
     compute(new.simpleName) { _, existing ->
         existing?.mergeWith(new) ?: new
     }

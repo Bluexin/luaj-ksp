@@ -4,17 +4,17 @@ import be.bluexin.luajksp.*
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
 import be.bluexin.luajksp.annotations.LuajMapped
-import com.google.devtools.ksp.*
+import com.google.devtools.ksp.KspExperimental
+import com.google.devtools.ksp.isAnnotationPresent
+import com.google.devtools.ksp.isOpen
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.KSPLogger
-import com.google.devtools.ksp.processing.Resolver
 import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.MemberName.Companion.member
 import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
-import org.intellij.lang.annotations.Language
-import java.io.OutputStream
 
 @OptIn(KspExperimental::class)
 internal class KotlinAccessGenerator(
@@ -24,7 +24,7 @@ internal class KotlinAccessGenerator(
 
     fun generate(
         forDeclaration: KSDeclaration,
-        properties: Map<String, PropertyLike>
+        properties: Map<String, ExposedData>
     ) {
         val receiverClassName = forDeclaration.simpleName.asString()
 
@@ -59,8 +59,8 @@ internal class KotlinAccessGenerator(
             .addParameter("key", LuaValueClassName)
             .addParameter("value", LuaValueClassName)
             .beginControlFlow("when (key.checkjstring())").apply {
-                properties.values.filter(PropertyLike::hasSetter).forEach {
-                    addLuaToKotlin(it, wrapped, functionWrappers)
+                properties.values.filter { it is ExposedPropertyLike && it.hasSetter }.forEach {
+                    addLuaToKotlin(it as ExposedPropertyLike, wrapped, functionWrappers)
                 }
                 addStatement(
                     "else -> " +
@@ -75,8 +75,11 @@ internal class KotlinAccessGenerator(
             .addParameter("key", LuaValueClassName)
             .returns(LuaValueClassName)
             .beginControlFlow("return when (key.checkjstring())").apply {
-                properties.values.filter(PropertyLike::hasGetter).forEach {
-                    addGetProperty(it, wrapped, frozenFunctionWrappers)
+                properties.values.filter { it is ExposedPropertyLike && it.hasGetter }.forEach {
+                    addGetProperty(it as ExposedPropertyLike, wrapped, frozenFunctionWrappers)
+                }
+                properties.values.mapNotNull { it as? ExposedFunction }.forEach {
+                    addGetFunction(it.declaration)
                 }
                 addStatement(
                     "else -> " +
@@ -98,6 +101,9 @@ internal class KotlinAccessGenerator(
             .addFunctions(listOf(getter, setter)).apply {
                 frozenFunctionWrappers.forEach { (name, type) ->
                     this.addFunctionWrapper(name, type, wrapped, frozenFunctionWrappers)
+                }
+                properties.values.asSequence().mapNotNull { it as? ExposedFunction }.forEach {
+                    addKtFunctionWrapper(it.declaration, wrapped, functionWrappers)
                 }
             }.addOriginatingKSFile(forDeclaration.containingFile!!)
             .build()
@@ -122,7 +128,7 @@ internal class KotlinAccessGenerator(
             } + "Wrapper"
 
     private fun FunSpec.Builder.addLuaToKotlin(
-        it: PropertyLike,
+        it: ExposedPropertyLike,
         wrapped: PropertySpec,
         functionWrappers: MutableMap<String, KSType>
     ) {
@@ -152,7 +158,7 @@ internal class KotlinAccessGenerator(
                 .qualifiedName?.asString() == LuajMapped::class.qualifiedName
         }
         val call = if (customMapper != null) {
-            val mapper  = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
+            val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
             extras.clear()
             extras += mapper.toTypeName()
             extras += receiver
@@ -175,9 +181,12 @@ internal class KotlinAccessGenerator(
                         val wrapperName = type.functionWrapperName
                         functionWrappers[wrapperName] = type
                         extras.clear()
+                        extras += receiver
                         extras += wrapperName
                         extras += receiver
-                        "%N(%L.checkfunction())"
+                        extras += wrapperName
+                        extras += receiver
+                        "if (%L is K2L%N) %L.ktFunction else %N(%L.checkfunction())"
                     } else error("Functions frozen", type.declaration)
                 } else {
                     val typeDeclaration = type.declaration
@@ -195,7 +204,12 @@ internal class KotlinAccessGenerator(
     }
 
     // TODO : support receiver function ?
-    private fun TypeSpec.Builder.addFunctionWrapper(name: String, type: KSType, wrapped: PropertySpec, functionWrappers: Map<String, KSType>) {
+    private fun TypeSpec.Builder.addFunctionWrapper(
+        name: String,
+        type: KSType,
+        wrapped: PropertySpec,
+        functionWrappers: Map<String, KSType>
+    ) {
         val luaFunction = PropertySpec.builder("luaFunction", LuaFunctionClassName)
             .initializer("luaFunction")
             .build()
@@ -239,10 +253,107 @@ internal class KotlinAccessGenerator(
                         }.build()
                 ).build()
         )
+
+        val ktFunction = PropertySpec.builder("ktFunction", type.toTypeName())
+            .initializer("ktFunction")
+            .build()
+
+        addType(
+            TypeSpec.classBuilder("K2L$name")
+                .addModifiers(KModifier.PRIVATE)
+                .superclass(type.toLuaFnSuperType())
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter(ktFunction.name, ktFunction.type)
+                        .build()
+                )
+                .addProperty(ktFunction)
+                .addFunction(
+                    FunSpec.builder("call")
+                        .addModifiers(KModifier.OVERRIDE)
+                        .returns(LuaValueClassName).apply {
+                            val args = type.arguments.take(type.arguments.size - 1) // removing return type
+                            val ktArgs = mutableListOf<String>()
+                            if (args.size > 3) {
+                                TODO("Arity > 3 not yet supported (wrap with varargs)")
+                            } else {
+                                args.forEachIndexed { index, arg ->
+                                    addParameter("arg$index", LuaValueClassName)
+                                    val (call, extras) = luaToKotlin(
+                                        "arg$index",
+                                        arg.type!!.resolve(),
+                                        wrapped,
+                                        functionWrappers
+                                    )
+                                    val ktArg = "luaArg$index"
+                                    ktArgs += ktArg
+                                    addStatement("val $ktArg = $call", *extras.toTypedArray())
+                                }
+                            }
+
+                            addStatement("val ret = %N(${ktArgs.joinToString()})", ktFunction)
+
+                            val returnType = type.arguments.last().type!!.resolve()
+
+                            if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
+                                "return %M", LuaValueClassName.member("NONE")
+                            ) else {
+                                val (retCall, extras) = kotlinToLua("ret", returnType, functionWrappers)
+                                addStatement("return $retCall", *extras.toTypedArray())
+                            }
+                        }.build()
+                ).build()
+        )
+    }
+
+    private fun TypeSpec.Builder.addKtFunctionWrapper(
+        decl: KSFunctionDeclaration,
+        wrapped: PropertySpec,
+        functionWrappers: Map<String, KSType>
+    ) {
+        addType(
+            TypeSpec.classBuilder("${decl.simpleName.asString()}Wrapper")
+                .addModifiers(KModifier.PRIVATE, KModifier.INNER)
+                .superclass(decl.toLuaFnSuperType())
+                .addFunction(
+                    FunSpec.builder("call")
+                        .addModifiers(KModifier.OVERRIDE)
+                        .returns(LuaValueClassName).apply {
+                            val ktArgs = mutableListOf<String>()
+                            if (decl.parameters.size > 3) {
+                                TODO()
+                            } else {
+                                decl.parameters.forEachIndexed { index, arg ->
+                                    addParameter("arg$index", LuaValueClassName)
+                                    val (call, extras) = luaToKotlin(
+                                        "arg$index",
+                                        arg.type.resolve(),
+                                        wrapped,
+                                        functionWrappers
+                                    )
+                                    val ktArg = "luaArg$index"
+                                    ktArgs += ktArg
+                                    addStatement("val $ktArg = $call", *extras.toTypedArray())
+                                }
+                            }
+
+                            addStatement("val ret = %N.%L(${ktArgs.joinToString()})", wrapped, decl.simpleName.asString())
+
+                            val returnType = decl.returnType!!.resolve()
+
+                            if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
+                                "return %M", LuaValueClassName.member("NONE")
+                            ) else {
+                                val (retCall, extras) = kotlinToLua("ret", returnType, functionWrappers)
+                                addStatement("return $retCall", *extras.toTypedArray())
+                            }
+                        }.build()
+                ).build()
+        )
     }
 
     private fun FunSpec.Builder.addGetProperty(
-        it: PropertyLike,
+        it: ExposedPropertyLike,
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
     ) {
@@ -250,20 +361,30 @@ internal class KotlinAccessGenerator(
         addStatement("%S -> $call", it.simpleName, *extras.toTypedArray())
     }
 
-    // TODO : add a way to define arbitrary (code-driven) mapping
+    private fun FunSpec.Builder.addGetFunction(
+        fn: KSFunctionDeclaration
+    ) {
+        addStatement("%1S -> %1L%2L()", fn.simpleName.asString(), "Wrapper")
+    }
+
     private fun kotlinToLua(
         receiver: String,
         type: KSType,
         functionWrappers: Map<String, KSType>
     ): Pair<String, List<Any>> {
         val extras = mutableListOf<Any>()
+        val nullability = if (type.nullability == Nullability.NULLABLE) {
+            extras += receiver
+            extras += LuaValueClassName.member("NIL")
+            "if (%L == null) %M else "
+        } else ""
 
         val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
             it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
                 .qualifiedName?.asString() == LuajMapped::class.qualifiedName
         }
         val call = if (customMapper != null) {
-            val mapper  = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
+            val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
             extras.clear()
             extras += mapper.toTypeName()
             extras += receiver
@@ -273,7 +394,13 @@ internal class KotlinAccessGenerator(
                 else -> error("Unsupported class kind : $ck", customMapper)
             }
         } else when (type.declaration.simpleName.getShortName()) {
-            "String", "Int", "Long", "Boolean", "Double" -> {
+            "String", "Int", "Boolean", "Double" -> {
+                extras += LuaValueOfName
+                extras += receiver
+                "%M(%L)"
+            }
+
+            "Long" -> {
                 extras += CoerceJavaToLuaName
                 extras += receiver
                 "%M(%L)"
@@ -286,8 +413,9 @@ internal class KotlinAccessGenerator(
                     if (wrapperName in functionWrappers) {
                         extras += receiver
                         extras += wrapperName
-                        extras += "Exposing pure KFunction to lua is not yet implemented"
-                        "(%L as? %N)?.luaFunction ?: error(%S)"
+                        extras += wrapperName
+                        extras += receiver
+                        "(%L as? %N)?.luaFunction ?: K2L%N(%L)"
                     } else {
                         extras += MemberName("kotlin", "TODO")
                         extras += "No wrapper found for $type (expected $wrapperName)"
@@ -304,7 +432,7 @@ internal class KotlinAccessGenerator(
             }
         }
 
-        return call to extras
+        return "$nullability$call" to extras
     }
 
     private val KSAnnotated.isExposed
@@ -318,5 +446,22 @@ internal class KotlinAccessGenerator(
         error(message)
     }
 
-    private fun OutputStream.appendKotlin(@Language("kt") str: String) = this.write(str.toByteArray())
+    private fun KSType.toLuaFnSuperType(): ClassName = when {
+        !isFunctionType -> error("Expected Function type", this.declaration)
+        else -> when (arguments.size) {
+            1 -> ZeroArgFunctionName
+            2 -> OneArgFunctionName
+            3 -> TwoArgFunctionName
+            4 -> ThreeArgFunctionName
+            else -> VarArgFunctionName
+        }
+    }
+
+    private fun KSFunctionDeclaration.toLuaFnSuperType(): ClassName = when (parameters.size) {
+        0 -> ZeroArgFunctionName
+        1 -> OneArgFunctionName
+        2 -> TwoArgFunctionName
+        3 -> ThreeArgFunctionName
+        else -> VarArgFunctionName
+    }
 }

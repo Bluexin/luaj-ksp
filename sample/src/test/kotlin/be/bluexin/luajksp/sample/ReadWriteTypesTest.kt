@@ -4,10 +4,6 @@ import be.bluexin.luajksp.annotations.LuajExclude
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.sample.access.toLua
 import org.intellij.lang.annotations.Language
-import org.luaj.vm2.LuaFunction
-import org.luaj.vm2.LuaValue
-import org.luaj.vm2.Varargs
-import org.luaj.vm2.lib.jse.CoerceJavaToLua
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
@@ -33,7 +29,7 @@ class ReadWriteTypesTest {
         LuaJTest.runTestScript(
             test.fieldRefs.joinToString(separator = "\n", transform = ::assertRead),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
     }
 
     @Test // Should we return nil instead to be more lua-like ?
@@ -65,7 +61,7 @@ class ReadWriteTypesTest {
                 t.nullableText = nil
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals("newTest", test.text)
         assertEquals(initial.int + 3, test.int)
@@ -90,7 +86,7 @@ class ReadWriteTypesTest {
                 t.text = ${newText.quoteIfNeeded}
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals(newText, test.text)
     }
@@ -110,7 +106,7 @@ class ReadWriteTypesTest {
                 t.javaHolder.text = ${newText.quoteIfNeeded}
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals(newText, test.javaHolder.text)
     }
@@ -145,11 +141,13 @@ class ReadWriteTypesTest {
 
         LuaJTest.runTestScript(
             """
-                _t.sum = function(a, b) return a + b end
-                assert_equals(42, _t.sum(19, 23))
+                --- @type ReadWriteTypesHolder
+                local t = testing.testValue
+                t.sum = function(a, b) return a + b end
+                assert_equals(42, t.sum(19, 23))
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals(5, test.sum(2, 3))
     }
@@ -160,12 +158,14 @@ class ReadWriteTypesTest {
 
         LuaJTest.runTestScript(
             """
+                --- @type ReadWriteTypesHolder
+                local t = testing.testValue
                 function asum(a, b) return a + b end
-                _t.sum = asum
-                assert_equals(42, _t.sum(19, 23))
+                t.sum = asum
+                assert_equals(42, t.sum(19, 23))
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals(5, test.sum(2, 3))
     }

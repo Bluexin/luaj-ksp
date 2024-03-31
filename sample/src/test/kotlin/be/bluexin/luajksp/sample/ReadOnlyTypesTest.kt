@@ -29,7 +29,7 @@ class ReadOnlyTypesTest {
         LuaJTest.runTestScript(
             test.fieldRefs.joinToString(separator = "\n", transform = ::assertRead),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
     }
 
     @Test
@@ -45,7 +45,7 @@ class ReadOnlyTypesTest {
                 assert_equals(${test.toString().quoteIfNeeded}, tostring(t), "tostring")
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
     }
 
     @Test
@@ -61,7 +61,7 @@ class ReadOnlyTypesTest {
                 assert_equals(${test.uuid.toString().quoteIfNeeded}, tostring(t.uuid), "tostring")
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
     }
 
     @Test
@@ -78,7 +78,7 @@ class ReadOnlyTypesTest {
                 assert_equals(${test.toString().quoteIfNeeded}, tostring(t), "tostring")
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
     }
 
     @Test // Should we return nil instead to be more lua-like ?
@@ -97,14 +97,18 @@ class ReadOnlyTypesTest {
     fun `property access syntax not available for Kotlin property-like`() {
         val test = ReadOnlyTypesHolder()
 
-        arrayOf("something", "getSomething").forEach {
-            val result = LuaJTest.runTestScript(
-                "print(_t.$it)",
-                test.toLua()
-            )
-            assertIs<ScriptResult.Failure>(result)
-            assertContains(result.errorMessage, "Cannot get $it on ${ReadOnlyTypesHolder::class.simpleName}")
-        }
+
+        val result = LuaJTest.runTestScript(
+            "print(_t.something)",
+            test.toLua()
+        )
+        assertIs<ScriptResult.Failure>(result)
+        assertContains(result.errorMessage, "Cannot get something on ${ReadOnlyTypesHolder::class.simpleName}")
+
+        LuaJTest.runTestScript(
+            "assert_equals('something', _t.getSomething(), 'getSomething')",
+            test.toLua()
+        ).executionErrorAsFailure()
     }
 
     @Test
@@ -141,7 +145,7 @@ class ReadOnlyTypesTest {
                 ::text, ::int, ::long, ::boolean, ::double, ::nullableText
             )
 
-        fun getSomething(): String = ""
+        fun getSomething(): String = "something"
     }
 }
 

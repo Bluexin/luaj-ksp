@@ -26,7 +26,7 @@ class InheritanceTest {
                 t.name = "Hello from Lua"
             """.trimIndent(),
             test.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals(71, test.age)
         assertEquals("Hello from Lua", test.name)

@@ -33,7 +33,7 @@ class TypeAliasMapperTest {
                 }
             """.trimIndent(),
             holder.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals("newNS", holder.id.nameSpace)
         assertEquals("newRes", holder.id.resource)
@@ -47,7 +47,7 @@ class TypeAliasMapperTest {
                 _t.id = 'newNewNS:newNewRes'
             """.trimIndent(),
             holder.toLua()
-        ).executionAsFailure()
+        ).executionErrorAsFailure()
 
         assertEquals("newNewNS", holder.id.nameSpace)
         assertEquals("newNewRes", holder.id.resource)

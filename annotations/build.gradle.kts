@@ -15,7 +15,7 @@ repositories {
 
 dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-    compileOnly("com.github.wagyourtail.luaj:luaj-jse:05e2b7d76a")
+    compileOnly("com.github.wagyourtail.luaj:luaj-jse:f062b53a34")
 }
 
 tasks.test {

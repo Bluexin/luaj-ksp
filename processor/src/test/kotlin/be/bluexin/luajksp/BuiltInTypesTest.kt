@@ -7,6 +7,8 @@ import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.assertThrows
 import org.luaj.vm2.LuaError
 import org.luaj.vm2.LuaUserdata
+import org.luaj.vm2.LuaValue
+import org.luaj.vm2.lib.OneArgFunction
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -37,15 +39,18 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
             result.classLoader.loadClass("access.KClassAccess")
         }
 
-        val data = result.instance("KClass", {_: Double -> })
+        class E: Exception()
+        val data = result.instance("KClass", {_: Double -> throw E() })
         val access = result.instance("access.KClassAccess",  data)
 
         assertIs<LuaUserdata>(access)
 
-        val error = assertThrows<LuaError> {
+        val cb = assertDoesNotThrow {
             access.get("cb")
         }
 
-        assertEquals("Exposing pure KFunction to lua is not yet implemented", error.errorMessage)
+        assertIs<OneArgFunction>(cb)
+
+        assertThrows<E> { cb.call(LuaValue.valueOf(42.0)) }
     }
 }

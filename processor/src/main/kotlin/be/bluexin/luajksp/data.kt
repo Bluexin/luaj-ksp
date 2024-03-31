@@ -19,44 +19,41 @@ internal val KSAnnotated.exposeExternal: LuajExposeExternal? get() = getAnnotati
 @OptIn(KspExperimental::class)
 internal val KSAnnotated.exclude: LuajExclude? get() = getAnnotationsByType(LuajExclude::class).singleOrNull()
 
-internal class AccessClassFQN(private val originalFQN: KSDeclaration) : KSName {
-    override fun asString() = "${getQualifier()}.${getShortName()}"
-    override fun getQualifier() = "${(originalFQN.packageName.asString().takeIf(String::isNotEmpty)?.let { "$it." }).orEmpty()}access"
-    override fun getShortName() = "${originalFQN.simpleName.getShortName()}Access"
-}
-
 internal val KSDeclaration.accessClassName get() = ClassName(
     (packageName.asString().takeIf(String::isNotEmpty)?.let { "$it." }).orEmpty() + "access",
     simpleName.getShortName() + "Access"
 )
 
-internal object LuaUserdataFQN : KSName {
-    override fun asString() = "${getQualifier()}.${getShortName()}"
-    override fun getQualifier() = "org.luaj.vm2"
-    override fun getShortName() = "LuaUserdata"
-}
-
 internal val LuaUserdataClassName = ClassName("org.luaj.vm2", "LuaUserdata")
 internal val LuaValueClassName = LuaUserdataClassName.peerClass("LuaValue")
+internal val LuaValueOfName = LuaUserdataClassName.member("valueOf")
 internal val LuaVarargsOfName = LuaUserdataClassName.member("varargsOf")
 internal val LuaFunctionClassName = LuaUserdataClassName.peerClass("LuaFunction")
 internal val CoerceJavaToLuaName = ClassName("org.luaj.vm2.lib.jse", "CoerceJavaToLua").member("coerce")
+internal val ZeroArgFunctionName = ClassName("org.luaj.vm2.lib", "ZeroArgFunction")
+internal val OneArgFunctionName = ZeroArgFunctionName.peerClass("OneArgFunction")
+internal val TwoArgFunctionName = ZeroArgFunctionName.peerClass("TwoArgFunction")
+internal val ThreeArgFunctionName = ZeroArgFunctionName.peerClass("ThreeArgFunction")
+internal val VarArgFunctionName = ZeroArgFunctionName.peerClass("VarArgFunction")
 
-internal sealed interface PropertyLike {
-    val hasGetter: Boolean
-    val hasSetter: Boolean
+internal sealed interface ExposedData {
     val simpleName: String
-    val type: KSTypeReference
-    val parentDeclaration: KSDeclaration?
     val docString: String?
+    val parentDeclaration: KSDeclaration?
     val source: KSNode
 
-    fun mergeWith(other: PropertyLike): PropertyLike =
+    fun mergeWith(other: ExposedData): ExposedData =
         throw UnsupportedOperationException("Cannot merge $this with $other")
+}
+
+internal sealed interface ExposedPropertyLike: ExposedData {
+    val hasGetter: Boolean
+    val hasSetter: Boolean
+    val type: KSTypeReference
 
     data class FromKSProperty(
         private val property: KSPropertyDeclaration
-    ) : PropertyLike {
+    ) : ExposedPropertyLike {
         override val hasGetter get() = property.getter != null
         override val hasSetter get() = property.setter != null
         override val simpleName get() = property.simpleName.asString()
@@ -72,7 +69,7 @@ internal sealed interface PropertyLike {
         override val type: KSTypeReference,
         private var getter: KSFunctionDeclaration?,
         private var setter: KSFunctionDeclaration?,
-    ) : PropertyLike {
+    ) : ExposedPropertyLike {
         override val hasGetter get() = getter != null
         override val hasSetter get() = setter != null
         override val parentDeclaration get() = getter?.parentDeclaration ?: setter?.parentDeclaration
@@ -80,10 +77,10 @@ internal sealed interface PropertyLike {
             get() = listOfNotNull(
                 getter?.docString?.let { "Getter: ${it.trim()}" },
                 setter?.docString?.let { "Setter: ${it.trim()}" }
-            ).joinToString("\n ").replace('@', '-')
+            ).joinToString("\n").replace('@', '-')
         override val source get() = getter ?: setter!!
 
-        override fun mergeWith(other: PropertyLike): FromKSFunctions {
+        override fun mergeWith(other: ExposedData): FromKSFunctions {
             require(other is FromKSFunctions) { "Cannot merge $this with $other" }
             require(simpleName == other.simpleName) { "Name mismatch merging $this with $other" }
             require(type.resolve() == other.type.resolve()) { "Type mismatch merging $this with $other" }
@@ -135,4 +132,13 @@ internal sealed interface PropertyLike {
             }
         }
     }
+}
+
+internal data class ExposedFunction(
+    val declaration: KSFunctionDeclaration
+): ExposedData {
+    override val simpleName get() = declaration.simpleName.asString()
+    override val docString get() = declaration.docString
+    override val parentDeclaration get() = declaration.parentDeclaration
+    override val source get() = declaration
 }

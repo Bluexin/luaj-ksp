@@ -32,7 +32,7 @@ fun LuaJTest.runTestScript(
     }
 }
 
-fun ScriptResult.executionAsFailure() {
+fun ScriptResult.executionErrorAsFailure() {
     if (this is ScriptResult.Failure) {
         var index = 1 // Lua index starts at 1
         fail("Script crashed : ${this.errorMessage}\nScript being evaluated: \n${
