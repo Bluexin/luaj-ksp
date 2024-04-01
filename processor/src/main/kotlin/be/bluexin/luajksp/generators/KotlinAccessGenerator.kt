@@ -160,7 +160,7 @@ internal class KotlinAccessGenerator(
         }
         val call = if (customMapper != null) {
             val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
-            extras.clear()
+            extras.removeFirst()
             extras += mapper.toTypeName()
             extras += receiver
             when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
@@ -181,8 +181,6 @@ internal class KotlinAccessGenerator(
                     if (functionWrappers is MutableMap) {
                         val wrapperName = type.functionWrapperName
                         functionWrappers[wrapperName] = type
-                        extras.clear()
-                        extras += receiver
                         extras += wrapperName
                         extras += receiver
                         extras += wrapperName
