@@ -34,10 +34,10 @@ jobs:
       uses: gradle/actions/setup-gradle@417ae3ccd767c252f5661f1ace9f835f9654f2b5 # v3.1.0
 
     - name: Build with Gradle
-      run: ./gradlew build -Pversion=$(echo "${GITHUB_REF}+SNAPSHOT" | cut -d "/" -f3)
+      run: ./gradlew build -Pversion=$(echo "SNAPSHOT" | cut -d "/" -f3)
 
     - name: Publish to GitHub Packages
-      run: ./gradlew publish -Pversion=$(echo "${GITHUB_REF}+SNAPSHOT" | cut -d "/" -f3)
+      run: ./gradlew publish -Pversion=$(echo "SNAPSHOT" | cut -d "/" -f3)
       env:
         USERNAME: ${{ github.actor }}
         TOKEN: ${{ secrets.GITHUB_TOKEN }}
