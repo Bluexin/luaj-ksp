@@ -6,8 +6,11 @@ import be.bluexin.luajksp.annotations.LuajMapped
 import be.bluexin.luajksp.sample.access.toLua
 import org.luaj.vm2.LuaValue
 import org.luaj.vm2.LuaValue.valueOf
-import kotlin.test.*
+import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
 
 class ClassMapperTest {
 
@@ -16,7 +19,7 @@ class ClassMapperTest {
 
     @Test
     fun `custom mapper on class is used`() {
-        val holder = ClassValueTestHolder(id= Identifier("ns", "path"))
+        val holder = ClassValueTestHolder(id = Identifier("ns", "path"), nullableId = null)
 
         LuaJTest.runTestScript(
             """
@@ -28,6 +31,8 @@ class ClassMapperTest {
                     nameSpace = 'newNS',
                     resource = 'newRes'
                 }
+                assert_equals(nil, _t.nullableId)
+                _t.nullableId = nil
             """.trimIndent(),
             holder.toLua()
         ).executionErrorAsFailure()
@@ -74,7 +79,8 @@ class ClassMapperTest {
 
     @LuajExpose
     data class ClassValueTestHolder(
-        var id: Identifier
+        var id: Identifier,
+        var nullableId: Identifier?
     )
 
     @LuajMapped(mapper = Mapper::class)
@@ -85,21 +91,25 @@ class ClassMapperTest {
         override fun toString() = "$nameSpace:$resource"
     }
 
-    object Mapper: LKMapper<Identifier> {
-        override fun toLua(value: Identifier): LuaValue = LuaValue.tableOf(arrayOf(
-            valueOf("nameSpace"), valueOf(value.nameSpace),
-            valueOf("resource"), valueOf(value.resource),
-        ))
+    object Mapper : LKMapper<Identifier> {
+        override fun toLua(value: Identifier): LuaValue = LuaValue.tableOf(
+            arrayOf(
+                valueOf("nameSpace"), valueOf(value.nameSpace),
+                valueOf("resource"), valueOf(value.resource),
+            )
+        )
 
         override fun fromLua(value: LuaValue): Identifier = when {
             value.istable() -> Identifier(
                 value["nameSpace"].checkjstring(),
                 value["resource"].checkjstring()
             )
+
             value.isstring() -> value.checkjstring().split(':').let {
                 check(it.size == 2) { "$value is not a valid string identifier !" }
                 Identifier(it.first(), it.last())
             }
+
             else -> throw IllegalArgumentException("$value is not a valid identifier ! Expected string (namespace:resource) or table ({nameSpace: string, resource: string})")
         }
     }

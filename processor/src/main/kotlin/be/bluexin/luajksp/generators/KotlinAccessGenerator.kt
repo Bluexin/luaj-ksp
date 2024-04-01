@@ -376,20 +376,15 @@ internal class KotlinAccessGenerator(
         functionWrappers: Map<String, KSType>
     ): Pair<String, List<Any>> {
         val extras = mutableListOf<Any>()
-        val nullability = if (type.nullability == Nullability.NULLABLE) {
-            extras += receiver
-            extras += LuaValueClassName.member("NIL")
-            "if (%L == null) %M else "
-        } else ""
 
         val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
             it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
                 .qualifiedName?.asString() == LuajMapped::class.qualifiedName
         }
-        val call = if (customMapper != null) {
+        fun call(nestedReceiver: String): String = if (customMapper != null) {
             val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
             extras += mapper.toTypeName()
-            extras += receiver
+            extras += nestedReceiver
             when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
                 ClassKind.OBJECT -> "%T.toLua(%L)"
                 ClassKind.CLASS -> "%T().toLua(%L)"
@@ -398,13 +393,13 @@ internal class KotlinAccessGenerator(
         } else when (type.declaration.simpleName.getShortName()) {
             "String", "Int", "Boolean", "Double" -> {
                 extras += LuaValueOfName
-                extras += receiver
+                extras += nestedReceiver
                 "%M(%L)"
             }
 
             "Long" -> {
                 extras += CoerceJavaToLuaName
-                extras += receiver
+                extras += nestedReceiver
                 "%M(%L)"
             }
 
@@ -413,10 +408,10 @@ internal class KotlinAccessGenerator(
                     logger.warn("Found function type", type.declaration)
                     val wrapperName = type.functionWrapperName
                     if (wrapperName in functionWrappers) {
-                        extras += receiver
+                        extras += nestedReceiver
                         extras += wrapperName
                         extras += wrapperName
-                        extras += receiver
+                        extras += nestedReceiver
                         "(%L as? %N)?.luaFunction ?: K2L%N(%L)"
                     } else {
                         extras += MemberName("kotlin", "TODO")
@@ -427,14 +422,21 @@ internal class KotlinAccessGenerator(
                     val typeDeclaration = type.declaration
                     if (typeDeclaration.isExposed) {
                         extras += typeDeclaration.accessClassName
-                        extras += receiver
+                        extras += nestedReceiver
                         "%T(%L)"
                     } else type.unsupportedTypeError(context)
                 }
             }
         }
 
-        return "$nullability$call" to extras
+        val withNullability = if (type.nullability == Nullability.NULLABLE) {
+            extras += receiver
+            val call = call("it")
+            extras += LuaValueClassName.member("NIL")
+            "%L?.let { $call } ?: %M"
+        } else call(receiver)
+
+        return withNullability to extras
     }
 
     private val KSAnnotated.isExposed
