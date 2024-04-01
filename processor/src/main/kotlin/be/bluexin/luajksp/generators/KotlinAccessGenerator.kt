@@ -388,7 +388,6 @@ internal class KotlinAccessGenerator(
         }
         val call = if (customMapper != null) {
             val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
-            extras.clear()
             extras += mapper.toTypeName()
             extras += receiver
             when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {

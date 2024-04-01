@@ -26,6 +26,7 @@ class MethodCallTest {
                 assert_equals(142, t.getDoubleTruth(), "getDoubleTruth()")
                 assert_equals(15, t.setSomeStuff('test', 'hello:world'))
                 assert_equals(8, t.setSomeStuff('test', nil))
+                assert_equals(nil, t.setSomeStuff2(nil))
             """.trimIndent(),
             test.toLua()
         ).executionErrorAsFailure()
@@ -39,5 +40,6 @@ class MethodCallTest {
     ) {
         fun getDoubleTruth() = truth * 2
         fun setSomeStuff(key: String, value: ClassMapperTest.Identifier?) = key.length + value.toString().length
+        fun setSomeStuff2(value: ClassMapperTest.Identifier?): ClassMapperTest.Identifier? = value
     }
 }
