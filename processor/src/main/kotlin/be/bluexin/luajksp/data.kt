@@ -5,8 +5,11 @@ import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAnnotationsByType
+import com.google.devtools.ksp.isOpen
+import com.google.devtools.ksp.isPublic
 import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName.Companion.member
 import java.util.*
 
@@ -54,8 +57,8 @@ internal sealed interface ExposedPropertyLike: ExposedData {
     data class FromKSProperty(
         private val property: KSPropertyDeclaration
     ) : ExposedPropertyLike {
-        override val hasGetter get() = property.getter != null
-        override val hasSetter get() = property.setter != null
+        override val hasGetter get() = property.getter != null && Modifier.PRIVATE !in property.getter!!.modifiers
+        override val hasSetter get() = property.setter != null && Modifier.PRIVATE !in property.setter!!.modifiers
         override val simpleName get() = property.simpleName.asString()
         override val type get() = property.type
         override val parentDeclaration get() = property.parentDeclaration
