@@ -100,7 +100,7 @@ internal class KotlinAccessGenerator(
             ).addProperty(wrapped)
             .addFunctions(listOf(getter, setter)).apply {
                 frozenFunctionWrappers.forEach { (name, type) ->
-                    this.addFunctionWrapper(name, type, wrapped, frozenFunctionWrappers)
+                    this.addFunctionWrapper(forDeclaration, name, type, wrapped, frozenFunctionWrappers)
                 }
                 properties.values.asSequence().mapNotNull { it as? ExposedFunction }.forEach {
                     addKtFunctionWrapper(it.declaration, wrapped, functionWrappers)
@@ -136,12 +136,13 @@ internal class KotlinAccessGenerator(
         val type = typeRef.resolve()
         logger.logging("Processing $typeRef (resolved to `$type`) for $this", typeRef)
 
-        val (call, extras) = luaToKotlin("value", type, wrapped, functionWrappers)
+        val (call, extras) = luaToKotlin(it.source, "value", type, wrapped, functionWrappers)
 
         addStatement("%S -> %N.%L = $call", it.simpleName, wrapped, it.simpleName, *extras.toTypedArray())
     }
 
     private fun luaToKotlin(
+        context: KSNode,
         receiver: String,
         type: KSType,
         wrapped: PropertySpec,
@@ -187,7 +188,7 @@ internal class KotlinAccessGenerator(
                         extras += wrapperName
                         extras += receiver
                         "if (%L is K2L%N) %L.ktFunction else %N(%L.checkfunction())"
-                    } else error("Functions frozen", type.declaration)
+                    } else error("Functions frozen", context)
                 } else {
                     val typeDeclaration = type.declaration
                     if (typeDeclaration.isExposed) {
@@ -195,7 +196,7 @@ internal class KotlinAccessGenerator(
                         extras += typeDeclaration.accessClassName
                         extras += wrapped
                         "(%L.checkuserdata(%T::class.java) as %T).%N"
-                    } else type.unsupportedTypeError()
+                    } else type.unsupportedTypeError(context)
                 }
             }
         }
@@ -205,6 +206,7 @@ internal class KotlinAccessGenerator(
 
     // TODO : support receiver function ?
     private fun TypeSpec.Builder.addFunctionWrapper(
+        context: KSNode,
         name: String,
         type: KSType,
         wrapped: PropertySpec,
@@ -232,7 +234,7 @@ internal class KotlinAccessGenerator(
                             val luaArgs = mutableListOf<String>()
                             args.forEachIndexed { index, arg ->
                                 addParameter("arg$index", arg.toTypeName())
-                                val (call, extras) = kotlinToLua("arg$index", arg.type!!.resolve(), functionWrappers)
+                                val (call, extras) = kotlinToLua(context, "arg$index", arg.type!!.resolve(), functionWrappers)
                                 val luaArg = "luaArg$index"
                                 luaArgs += luaArg
                                 addStatement("val $luaArg = $call", *extras.toTypedArray())
@@ -247,7 +249,7 @@ internal class KotlinAccessGenerator(
 
                             if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement("return Unit")
                             else {
-                                val (retCall, extras) = luaToKotlin("ret", returnType, wrapped, functionWrappers)
+                                val (retCall, extras) = luaToKotlin(context, "ret", returnType, wrapped, functionWrappers)
                                 addStatement("return $retCall", *extras.toTypedArray())
                             }
                         }.build()
@@ -261,7 +263,7 @@ internal class KotlinAccessGenerator(
         addType(
             TypeSpec.classBuilder("K2L$name")
                 .addModifiers(KModifier.PRIVATE)
-                .superclass(type.toLuaFnSuperType())
+                .superclass(type.toLuaFnSuperType(context))
                 .primaryConstructor(
                     FunSpec.constructorBuilder()
                         .addParameter(ktFunction.name, ktFunction.type)
@@ -280,6 +282,7 @@ internal class KotlinAccessGenerator(
                                 args.forEachIndexed { index, arg ->
                                     addParameter("arg$index", LuaValueClassName)
                                     val (call, extras) = luaToKotlin(
+                                        context,
                                         "arg$index",
                                         arg.type!!.resolve(),
                                         wrapped,
@@ -298,7 +301,7 @@ internal class KotlinAccessGenerator(
                             if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
                                 "return %M", LuaValueClassName.member("NONE")
                             ) else {
-                                val (retCall, extras) = kotlinToLua("ret", returnType, functionWrappers)
+                                val (retCall, extras) = kotlinToLua(context, "ret", returnType, functionWrappers)
                                 addStatement("return $retCall", *extras.toTypedArray())
                             }
                         }.build()
@@ -326,6 +329,7 @@ internal class KotlinAccessGenerator(
                                 decl.parameters.forEachIndexed { index, arg ->
                                     addParameter("arg$index", LuaValueClassName)
                                     val (call, extras) = luaToKotlin(
+                                        decl,
                                         "arg$index",
                                         arg.type.resolve(),
                                         wrapped,
@@ -344,7 +348,7 @@ internal class KotlinAccessGenerator(
                             if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
                                 "return %M", LuaValueClassName.member("NONE")
                             ) else {
-                                val (retCall, extras) = kotlinToLua("ret", returnType, functionWrappers)
+                                val (retCall, extras) = kotlinToLua(decl, "ret", returnType, functionWrappers)
                                 addStatement("return $retCall", *extras.toTypedArray())
                             }
                         }.build()
@@ -357,7 +361,7 @@ internal class KotlinAccessGenerator(
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
     ) {
-        val (call, extras) = kotlinToLua("${wrapped.name}.${it.simpleName}", it.type.resolve(), functionWrappers)
+        val (call, extras) = kotlinToLua(it.source, "${wrapped.name}.${it.simpleName}", it.type.resolve(), functionWrappers)
         addStatement("%S -> $call", it.simpleName, *extras.toTypedArray())
     }
 
@@ -368,6 +372,7 @@ internal class KotlinAccessGenerator(
     }
 
     private fun kotlinToLua(
+        context: KSNode,
         receiver: String,
         type: KSType,
         functionWrappers: Map<String, KSType>
@@ -391,7 +396,7 @@ internal class KotlinAccessGenerator(
             when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
                 ClassKind.OBJECT -> "%T.toLua(%L)"
                 ClassKind.CLASS -> "%T().toLua(%L)"
-                else -> error("Unsupported class kind : $ck", customMapper)
+                else -> error("Unsupported class kind : $ck", context)
             }
         } else when (type.declaration.simpleName.getShortName()) {
             "String", "Int", "Boolean", "Double" -> {
@@ -427,7 +432,7 @@ internal class KotlinAccessGenerator(
                         extras += typeDeclaration.accessClassName
                         extras += receiver
                         "%T(%L)"
-                    } else type.unsupportedTypeError()
+                    } else type.unsupportedTypeError(context)
                 }
             }
         }
@@ -439,15 +444,15 @@ internal class KotlinAccessGenerator(
         get() = isAnnotationPresent(LuajExpose::class) ||
                 isAnnotationPresent(LuajExposeExternal::class)
 
-    private fun KSType.unsupportedTypeError(): Nothing = error("Unsupported type $this", declaration)
+    private fun KSType.unsupportedTypeError(context: KSNode): Nothing = error("Unsupported type $this", context)
 
     private fun error(message: String, at: KSNode): Nothing {
         logger.error(message, at)
         error(message)
     }
 
-    private fun KSType.toLuaFnSuperType(): ClassName = when {
-        !isFunctionType -> error("Expected Function type", this.declaration)
+    private fun KSType.toLuaFnSuperType(context: KSNode): ClassName = when {
+        !isFunctionType -> error("Expected Function type", context)
         else -> when (arguments.size) {
             1 -> ZeroArgFunctionName
             2 -> OneArgFunctionName
