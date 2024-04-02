@@ -15,6 +15,7 @@ import org.luaj.vm2.LuaValue
 import org.luaj.vm2.Varargs
 import org.luaj.vm2.lib.OneArgFunction
 import org.luaj.vm2.lib.TwoArgFunction
+import org.luaj.vm2.lib.VarArgFunction
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.test.*
@@ -57,6 +58,66 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertIs<OneArgFunction>(cb)
 
         assertThrows<E> { cb.call(LuaValue.valueOf(42.0)) }
+    }
+
+    @Test
+    fun `test high arity KFunction processing`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(var cb: (Int, Int, Int, Int) -> Int)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        assertDoesNotThrow {
+            result.classLoader.loadClass("access.KClassAccess")
+        }
+
+        val data = result.instance("KClass", { _: Int, _: Int, _: Int, _: Int -> 0 })
+        val access = result.instance("access.KClassAccess",  data)
+
+        assertIs<LuaUserdata>(access)
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertIs<VarArgFunction>(cb)
+
+        val args = slot<Varargs>()
+        val callback = mockk<LuaFunction> {
+            every { checkfunction() } returns this
+            every { this@mockk.invoke(capture(args)) } returns LuaValue.valueOf(42)
+        }
+
+        assertDoesNotThrow {
+            access.set("cb", callback)
+        }
+
+        val cbProp = data::class.declaredMemberProperties.singleOrNull()
+        assertNotNull(cbProp)
+        assertIs<KProperty1<Any, *>>(cbProp) // Just to make compiler happy, this has no value
+        val wrappedCb = cbProp(data)
+        assertIs<(Int, Int, Int, Int) -> Int>(wrappedCb) // will only check for Function4
+        val res = wrappedCb(1, 2, 3, 4)
+        assertIs<Int>(res)
+        assertEquals(42, res)
+
+        assertTrue(args.isCaptured)
+        val captured = args.captured
+        assertEquals(4, captured.narg())
+        assertEquals(1, captured.arg1().checkint())
+        assertEquals(2, captured.arg(2).checkint())
+        assertEquals(3, captured.arg(3).checkint())
+        assertEquals(4, captured.arg(4).checkint())
     }
 
     @Test
@@ -105,7 +166,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertNotNull(cbProp)
         assertIs<KProperty1<Any, *>>(cbProp) // Just to make compiler happy, this has no value
         val wrappedCb = cbProp(data)
-        assertIs<Any.(Int) -> Boolean>(wrappedCb) // will only check for KFunction2
+        assertIs<Any.(Int) -> Boolean>(wrappedCb) // will only check for Function2
         val res = wrappedCb(data, 42)
         assertIs<Boolean>(res)
         assertTrue(res)

@@ -202,7 +202,6 @@ internal class KotlinAccessGenerator(
         return "$nullability$call" to extras
     }
 
-    // TODO : support receiver function ?
     private fun TypeSpec.Builder.addFunctionWrapper(
         context: KSNode,
         name: String,
@@ -210,6 +209,11 @@ internal class KotlinAccessGenerator(
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
     ) {
+        val args = type.arguments.take(type.arguments.size - 1) // removing return type
+        val isLuaVararg = args.size > 3
+        val returnType = type.arguments.last().type!!.resolve()
+        val isReturnUnit = returnType.declaration.qualifiedName?.asString() == "kotlin.Unit"
+
         val luaFunction = PropertySpec.builder("luaFunction", LuaFunctionClassName)
             .initializer("luaFunction")
             .build()
@@ -228,11 +232,15 @@ internal class KotlinAccessGenerator(
                     FunSpec.builder("invoke")
                         .addModifiers(KModifier.OVERRIDE)
                         .returns(type.arguments.last().toTypeName()).apply {
-                            val args = type.arguments.take(type.arguments.size - 1) // removing return type
                             val luaArgs = mutableListOf<String>()
                             args.forEachIndexed { index, arg ->
                                 addParameter("arg$index", arg.toTypeName())
-                                val (call, extras) = kotlinToLua(context, "arg$index", arg.type!!.resolve(), functionWrappers)
+                                val (call, extras) = kotlinToLua(
+                                    context,
+                                    "arg$index",
+                                    arg.type!!.resolve(),
+                                    functionWrappers
+                                )
                                 val luaArg = "luaArg$index"
                                 luaArgs += luaArg
                                 addStatement("val $luaArg = $call", *extras.toTypedArray())
@@ -243,11 +251,15 @@ internal class KotlinAccessGenerator(
                                 luaFunction, LuaVarargsOfName,
                             )
 
-                            val returnType = type.arguments.last().type!!.resolve()
-
-                            if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement("return Unit")
+                            if (isReturnUnit) addStatement("return Unit")
                             else {
-                                val (retCall, extras) = luaToKotlin(context, "ret", returnType, wrapped, functionWrappers)
+                                val (retCall, extras) = luaToKotlin(
+                                    context,
+                                    "ret",
+                                    returnType,
+                                    wrapped,
+                                    functionWrappers
+                                )
                                 addStatement("return $retCall", *extras.toTypedArray())
                             }
                         }.build()
@@ -269,36 +281,30 @@ internal class KotlinAccessGenerator(
                 )
                 .addProperty(ktFunction)
                 .addFunction(
-                    FunSpec.builder("call")
+                    FunSpec.builder(if (isLuaVararg) "invoke" else "call")
                         .addModifiers(KModifier.OVERRIDE)
                         .returns(LuaValueClassName).apply {
-                            val args = type.arguments.take(type.arguments.size - 1) // removing return type
                             val ktArgs = mutableListOf<String>()
-                            if (args.size > 3) {
-                                TODO("Arity > 3 not yet supported (wrap with varargs)")
-                            } else {
-                                args.forEachIndexed { index, arg ->
-                                    addParameter("arg$index", LuaValueClassName)
-                                    val (call, extras) = luaToKotlin(
-                                        context,
-                                        "arg$index",
-                                        arg.type!!.resolve(),
-                                        wrapped,
-                                        functionWrappers
-                                    )
-                                    val ktArg = "luaArg$index"
-                                    ktArgs += ktArg
-                                    addStatement("val $ktArg = $call", *extras.toTypedArray())
-                                }
+
+                            if (isLuaVararg) addParameter("args", LuaVarargsClassName)
+                            args.forEachIndexed { index, arg ->
+                                if (!isLuaVararg) addParameter("arg$index", LuaValueClassName)
+                                val (call, extras) = luaToKotlin(
+                                    context,
+                                    if (isLuaVararg) "args.arg(${index + 1})" else "arg$index",
+                                    arg.type!!.resolve(),
+                                    wrapped,
+                                    functionWrappers
+                                )
+                                val ktArg = "luaArg$index"
+                                ktArgs += ktArg
+                                addStatement("val $ktArg = $call", *extras.toTypedArray())
                             }
 
                             addStatement("val ret = %N(${ktArgs.joinToString()})", ktFunction)
 
-                            val returnType = type.arguments.last().type!!.resolve()
-
-                            if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
-                                "return %M", LuaValueClassName.member("NONE")
-                            ) else {
+                            if (isReturnUnit) addStatement("return %M", LuaValueClassName.member("NONE"))
+                            else {
                                 val (retCall, extras) = kotlinToLua(context, "ret", returnType, functionWrappers)
                                 addStatement("return $retCall", *extras.toTypedArray())
                             }
@@ -339,7 +345,11 @@ internal class KotlinAccessGenerator(
                                 }
                             }
 
-                            addStatement("val ret = %N.%L(${ktArgs.joinToString()})", wrapped, decl.simpleName.asString())
+                            addStatement(
+                                "val ret = %N.%L(${ktArgs.joinToString()})",
+                                wrapped,
+                                decl.simpleName.asString()
+                            )
 
                             val returnType = decl.returnType!!.resolve()
 
@@ -359,7 +369,12 @@ internal class KotlinAccessGenerator(
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
     ) {
-        val (call, extras) = kotlinToLua(it.source, "${wrapped.name}.${it.simpleName}", it.type.resolve(), functionWrappers)
+        val (call, extras) = kotlinToLua(
+            it.source,
+            "${wrapped.name}.${it.simpleName}",
+            it.type.resolve(),
+            functionWrappers
+        )
         addStatement("%S -> $call", it.simpleName, *extras.toTypedArray())
     }
 
@@ -381,6 +396,7 @@ internal class KotlinAccessGenerator(
             it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
                 .qualifiedName?.asString() == LuajMapped::class.qualifiedName
         }
+
         fun call(nestedReceiver: String): String = if (customMapper != null) {
             val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
             extras += mapper.toTypeName()
