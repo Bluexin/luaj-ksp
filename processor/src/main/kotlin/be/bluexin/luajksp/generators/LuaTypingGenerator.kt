@@ -35,7 +35,7 @@ internal class LuaTypingGenerator(
         ).use { file ->
             file.appendLua(
                 """--- Generated with luaj-ksp
-                |--- ${forDeclaration.docString.kdocToLDoc("    ")}
+                |--- ${forDeclaration.docString.kdocToLDoc()}
                 |--- @class $targetClassName${
                     (if (forDeclaration is KSClassDeclaration) {
                         forDeclaration.superTypes
