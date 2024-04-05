@@ -10,7 +10,6 @@ import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.*
-import org.intellij.lang.annotations.Language
 import java.io.OutputStream
 
 @OptIn(KspExperimental::class)
@@ -34,7 +33,8 @@ internal class LuaTypingGenerator(
             extensionName = "lua",
         ).use { file ->
             file.appendLua(
-                """--- Generated with luaj-ksp
+                """
+                |--- Generated with luaj-ksp
                 |--- ${forDeclaration.docString.kdocToLDoc()}
                 |--- @class $targetClassName${
                     (if (forDeclaration is KSClassDeclaration) {
@@ -45,25 +45,25 @@ internal class LuaTypingGenerator(
                             }?.simpleName?.getShortName()?.takeIf(String::isNotBlank)?.let { ": $it" } ?: ""
                     } else "")
                 }
-                |$targetClassName = {${
-                    properties.values.joinToString(separator = ",\n") { accessor ->
+                ${
+                    properties.values.joinToString(separator = "\n") { accessor ->
                         when (accessor) {
-                            is ExposedPropertyLike -> """
-                                |    --- ${accessor.docString.kdocToLDoc("    ")}
-                                |    --- ${if (accessor.hasSetter) "mutable" else "immutable"}
-                                |    --- @type ${luaType(accessor.type.resolve())}
-                                |    ${accessor.simpleName} = nil"""
+                            is ExposedPropertyLike ->
+                                """|--- ${accessor.docString.kdocToLDoc()}
+                                |--- ${if (accessor.hasSetter) "mutable" else "immutable"}
+                                |--- @field ${accessor.simpleName} ${luaType(accessor.type.resolve())}"""
 
-                            is ExposedFunction -> """
-                                |    --- ${accessor.docString.kdocToLDoc("    ")}
-                                |    --- immutable
-                                |    --- @type fun(${funArgs(accessor.declaration)})${funReturnType(accessor.declaration)}
-                                |    ${accessor.simpleName} = nil"""
+                            is ExposedFunction ->
+                                """|--- ${accessor.docString.kdocToLDoc()}
+                                |--- immutable
+                                |--- @field ${accessor.simpleName} fun(${funArgs(accessor.declaration)})${
+                                    funReturnType(
+                                        accessor.declaration
+                                    )
+                                }"""
                         }
                     }
-                }
-                |}
-                """.trimMargin()
+                }""".trimMargin()
             )
         }
     }
@@ -99,12 +99,12 @@ internal class LuaTypingGenerator(
         }
     }
 
-    private fun String?.kdocToLDoc(indent: String = "") =
+    private fun String?.kdocToLDoc() =
         this?.trim()
             ?.takeIf(String::isNotEmpty)
-            ?.replace(Regex("\n +"), "\n$indent--- ")
+            ?.replace(Regex("\n *"), "\n--- ")
             ?: "No documentation provided"
 
-    private fun OutputStream.appendLua(@Language("lua") str: String) = this.write(str.toByteArray())
+    private fun OutputStream.appendLua(/*@Language("lua")*/ str: String) = this.write(str.toByteArray())
 
 }
