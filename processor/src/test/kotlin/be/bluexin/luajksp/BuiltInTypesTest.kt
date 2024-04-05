@@ -118,6 +118,8 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertEquals(2, captured.arg(2).checkint())
         assertEquals(3, captured.arg(3).checkint())
         assertEquals(4, captured.arg(4).checkint())
+
+        assertEquals("KClass", access.typename())
     }
 
     @Test
@@ -189,5 +191,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertEquals(2, captured2.narg())
         assertNotEquals(access, captured2.arg1())
         assertEquals(71, captured2.arg(2).checkint())
+
+        assertEquals("KClass", access.typename())
     }
 }

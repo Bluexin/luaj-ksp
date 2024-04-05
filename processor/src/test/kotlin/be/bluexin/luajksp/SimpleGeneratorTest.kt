@@ -67,6 +67,8 @@ class SimpleGeneratorTest : LKSymbolProcessorTest() {
         assertEquals(uuid.toString(), foundUuidAccess.tojstring())
         assertEquals(uuid.leastSignificantBits.toDouble(), foundUuidAccess.get("leastSignificantBits").checkdouble())
         assertEquals(uuid.mostSignificantBits.toDouble(), foundUuidAccess.get("mostSignificantBits").checkdouble())
+
+        assertEquals("ExposedUUID", foundUuidAccess.typename())
     }
 
     @Test

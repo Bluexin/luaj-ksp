@@ -30,6 +30,7 @@ class ReadWriteTypesTest {
             test.fieldRefs.joinToString(separator = "\n", transform = ::assertRead),
             test.toLua()
         ).executionErrorAsFailure()
+        assertEquals(ReadWriteTypesHolder::class.simpleName, test.toLua().typename())
     }
 
     @Test // Should we return nil instead to be more lua-like ?

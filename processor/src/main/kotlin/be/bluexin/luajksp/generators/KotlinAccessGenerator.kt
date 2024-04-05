@@ -98,6 +98,13 @@ internal class KotlinAccessGenerator(
                     .addParameter(wrapped.name, wrapped.type)
                     .build()
             ).addProperty(wrapped)
+            .addFunction(
+                FunSpec.builder("typename")
+                    .returns(String::class)
+                    .addModifiers(KModifier.OVERRIDE)
+                    .addStatement("return %S", forDeclaration.simpleName.asString())
+                    .build()
+            )
             .addFunctions(listOf(getter, setter)).apply {
                 frozenFunctionWrappers.forEach { (name, type) ->
                     this.addFunctionWrapper(forDeclaration, name, type, wrapped, frozenFunctionWrappers)

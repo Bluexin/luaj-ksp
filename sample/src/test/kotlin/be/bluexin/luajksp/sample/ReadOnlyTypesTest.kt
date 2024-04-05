@@ -8,10 +8,8 @@ import org.intellij.lang.annotations.Language
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
-import kotlin.test.BeforeTest
+import kotlin.test.*
 import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertIs
 
 class ReadOnlyTypesTest {
 
@@ -30,6 +28,8 @@ class ReadOnlyTypesTest {
             test.fieldRefs.joinToString(separator = "\n", transform = ::assertRead),
             test.toLua()
         ).executionErrorAsFailure()
+
+        assertEquals(ReadOnlyTypesHolder::class.simpleName, test.toLua().typename())
     }
 
     @Test
