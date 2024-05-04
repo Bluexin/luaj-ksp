@@ -3,13 +3,16 @@ package be.bluexin.luajksp.generators
 import be.bluexin.luajksp.ExposedData
 import be.bluexin.luajksp.ExposedFunction
 import be.bluexin.luajksp.ExposedPropertyLike
+import be.bluexin.luajksp.KotlinIterableName
 import be.bluexin.luajksp.annotations.LuajExpose
 import com.google.devtools.ksp.KspExperimental
+import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.isAnnotationPresent
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.*
+import com.squareup.kotlinpoet.ksp.toClassName
 import java.io.OutputStream
 
 @OptIn(KspExperimental::class)
@@ -88,14 +91,23 @@ internal class LuaTypingGenerator(
         "arg: ${luaType(arg.type!!.resolve())}"
     }
 
-    private fun luaType(type: KSType) = when (val ts = type.declaration.simpleName.asString()) {
+    private fun luaType(type: KSType): String = when (val ts = type.declaration.simpleName.asString()) {
         "String" -> "string"
         "Int", "Double", "Long" -> "number"
         "Boolean" -> "boolean"
         "Unit" -> ""
         else -> {
             if (type.isFunctionType) "fun(${funArgs(type.arguments)})${funReturnType(type.arguments)}"
-            else ts
+            else {
+                val decl = type.declaration
+                if (decl is KSClassDeclaration && decl.getAllSuperTypes()
+                        .any { it.toClassName() == KotlinIterableName }
+                ) {
+                    val bound = type.arguments.singleOrNull()?.type?.resolve()
+                        ?: error("Expected a single argument type", type.declaration)
+                    "${luaType(bound)}[]"
+                } else ts
+            }
         }
     }
 
@@ -106,5 +118,10 @@ internal class LuaTypingGenerator(
             ?: "No documentation provided"
 
     private fun OutputStream.appendLua(/*@Language("lua")*/ str: String) = this.write(str.toByteArray())
+
+    private fun error(message: String, at: KSNode): Nothing {
+        logger.error(message, at)
+        error(message)
+    }
 
 }

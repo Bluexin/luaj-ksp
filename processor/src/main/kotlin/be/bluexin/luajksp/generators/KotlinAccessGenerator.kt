@@ -5,6 +5,7 @@ import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
 import be.bluexin.luajksp.annotations.LuajMapped
 import com.google.devtools.ksp.KspExperimental
+import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.isAnnotationPresent
 import com.google.devtools.ksp.isOpen
 import com.google.devtools.ksp.processing.CodeGenerator
@@ -13,6 +14,7 @@ import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.MemberName.Companion.member
 import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
+import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 
@@ -117,14 +119,19 @@ internal class KotlinAccessGenerator(
 
         FileSpec.builder(target)
             .indent("    ")
-            .addType(accessClass)
-            .addFunction(
-                FunSpec.builder("toLua")
-                    .receiver(receiverType)
-                    .returns(target)
-                    .addStatement("return %T(this)", target)
-                    .build()
-            ).build()
+            .addType(accessClass).apply {
+                if (forDeclaration !is KSClassDeclaration || forDeclaration.getAllSuperTypes()
+                        .none { it.toClassName() == LKExposedName }
+                ) {
+                    addFunction(
+                        FunSpec.builder("toLua")
+                            .receiver(receiverType)
+                            .returns(target)
+                            .addStatement("return %T(this)", target)
+                            .build()
+                    )
+                }
+            }.build()
             .writeTo(codeGenerator, true)
     }
 
@@ -442,21 +449,54 @@ internal class KotlinAccessGenerator(
                         "%M(%S)"
                     }
                 } else {
+                    var call: String? = null
                     val typeDeclaration = type.declaration
-                    if (typeDeclaration.isExposed) {
+                    if (typeDeclaration is KSClassDeclaration) {
+                        val superTypes = typeDeclaration.getAllSuperTypes()
+
+                        if (superTypes.any { it.toClassName() == KotlinIterableName }) {
+                            extras += LuaTableOfName
+                            extras += nestedReceiver
+
+                            val bound = type.arguments.singleOrNull()?.type?.resolve()
+                                ?: error("Expected a single argument type", context)
+
+                            if (bound.declaration.isOpen() && bound.declaration.let { it !is KSClassDeclaration || it.getAllSuperTypes().none { t -> t.toClassName() == LKExposedName } }) {
+                                logger.warn("Exposing open type that does not implement $LKExposedName, this will not follow inheritance !", context)
+                            }
+
+                            val (nestedCall, nestedExtras) = kotlinToLua(
+                                context,
+                                "element",
+                                bound,
+                                functionWrappers
+                            )
+
+                            extras.addAll(nestedExtras)
+
+                            call = "%M(emptyArray(), %L.map { element -> $nestedCall }.toTypedArray())"
+                        } else if (superTypes.any { it.toClassName() == LKExposedName }) {
+                            extras += nestedReceiver
+                            call = "%L.toLua()"
+                        }
+                    }
+
+                    if (call == null && typeDeclaration.isExposed) {
                         extras += typeDeclaration.accessClassName
                         extras += nestedReceiver
-                        "%T(%L)"
-                    } else type.unsupportedTypeError(context)
+                        call = "%T(%L)"
+                    }
+
+                    call ?: type.unsupportedTypeError(context)
                 }
             }
         }
 
         val withNullability = if (type.nullability == Nullability.NULLABLE) {
             extras += receiver
-            val call = call("it")
+            val call = call("notNil")
             extras += LuaValueClassName.member("NIL")
-            "%L?.let { $call } ?: %M"
+            "%L?.let { notNil -> $call } ?: %M"
         } else call(receiver)
 
         return withNullability to extras

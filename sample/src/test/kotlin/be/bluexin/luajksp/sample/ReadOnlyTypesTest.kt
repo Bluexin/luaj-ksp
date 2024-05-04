@@ -8,8 +8,11 @@ import org.intellij.lang.annotations.Language
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
-import kotlin.test.*
+import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
 
 class ReadOnlyTypesTest {
 
@@ -81,6 +84,25 @@ class ReadOnlyTypesTest {
         ).executionErrorAsFailure()
     }
 
+    @Test
+    fun `reading on list type is ok`() {
+        val test = ReadOnlyTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                |--- @type ReadOnlyTypesHolder
+                |local t = testing.testValue
+                |assert_equals(${test.list.size}, #t.list, 'list.size')
+                ${
+                    test.list.mapIndexed { index, s ->
+                        "|assert_equals('$s', t.list[${index + 1}], 'list[${index + 1}]')"
+                    }.joinToString(separator = "\n")
+                }
+            |""".trimMargin(),
+            test.toLua()
+        ).executionErrorAsFailure()
+    }
+
     @Test // Should we return nil instead to be more lua-like ?
     fun `reading non existing value is nok`() {
         val test = ReadOnlyTypesHolder()
@@ -133,7 +155,8 @@ class ReadOnlyTypesTest {
         val boolean: Boolean = Random.nextBoolean(),
         val double: Double = Random.nextDouble(),
         val nullableText: String? = null,
-        val uuid: ExposedUUID = UUID.randomUUID()
+        val uuid: ExposedUUID = UUID.randomUUID(),
+        val list: List<String> = listOf("hello", "world")
     ) {
 
         /**

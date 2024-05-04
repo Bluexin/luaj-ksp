@@ -1,5 +1,6 @@
 package be.bluexin.luajksp
 
+import be.bluexin.luajksp.annotations.LKExposed
 import be.bluexin.luajksp.annotations.LuajExclude
 import be.bluexin.luajksp.annotations.LuajExpose
 import be.bluexin.luajksp.annotations.LuajExposeExternal
@@ -11,6 +12,7 @@ import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName.Companion.member
+import com.squareup.kotlinpoet.asClassName
 import java.util.*
 
 @OptIn(KspExperimental::class)
@@ -31,6 +33,7 @@ internal val LuaUserdataClassName = ClassName("org.luaj.vm2", "LuaUserdata")
 internal val LuaValueClassName = LuaUserdataClassName.peerClass("LuaValue")
 internal val LuaValueOfName = LuaUserdataClassName.member("valueOf")
 internal val LuaVarargsOfName = LuaUserdataClassName.member("varargsOf")
+internal val LuaTableOfName = LuaUserdataClassName.member("tableOf")
 internal val LuaFunctionClassName = LuaUserdataClassName.peerClass("LuaFunction")
 internal val LuaVarargsClassName = LuaUserdataClassName.peerClass("Varargs")
 internal val CoerceJavaToLuaName = ClassName("org.luaj.vm2.lib.jse", "CoerceJavaToLua").member("coerce")
@@ -39,6 +42,8 @@ internal val OneArgFunctionName = ZeroArgFunctionName.peerClass("OneArgFunction"
 internal val TwoArgFunctionName = ZeroArgFunctionName.peerClass("TwoArgFunction")
 internal val ThreeArgFunctionName = ZeroArgFunctionName.peerClass("ThreeArgFunction")
 internal val VarArgFunctionName = ZeroArgFunctionName.peerClass("VarArgFunction")
+internal val KotlinIterableName = ClassName("kotlin.collections", "Iterable")
+internal val LKExposedName = LKExposed::class.asClassName()
 
 internal sealed interface ExposedData {
     val simpleName: String

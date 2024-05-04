@@ -194,4 +194,93 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         assertEquals("KClass", access.typename())
     }
+
+    @Test
+    fun `test iterable processing`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(val list: List<String>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        assertDoesNotThrow {
+            result.classLoader.loadClass("access.KClassAccess")
+        }
+
+        val input = listOf("hello", "world")
+        val data = result.instance("KClass", input)
+        val access = result.instance("access.KClassAccess",  data)
+
+        assertIs<LuaUserdata>(access)
+
+        val list = assertDoesNotThrow {
+            access.get("list")
+        }
+
+        assertTrue(list.istable())
+
+        input.forEachIndexed { index, s ->
+            val v = list[index + 1]
+            assertTrue(v.isstring(), "Unexpected type at index $index: ${v.typename()}")
+            assertEquals(s, v.checkjstring(), "Unexpected value at index $index")
+        }
+    }
+
+    @Test
+    fun `test iterable processing for non final class that does not implement LKExposed logs warning`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    
+                    @LuajExpose
+                    open class NonFinal
+
+                    @LuajExpose
+                    class KClass(val list: List<NonFinal>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Exposing open type that does not implement be.bluexin.luajksp.annotations.LKExposed, this will not follow inheritance !")
+    }
+
+    @Test
+    fun `test iterable processing for non final class that implements LKExposed does not log warning`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaValue
+                    
+                    @LuajExpose(LuajExpose.IncludeType.OPT_IN)
+                    open class NonFinal: LKExposed {
+                        override fun toLua(): LuaValue = TODO()
+                    }
+
+                    @LuajExpose
+                    class KClass(val list: List<NonFinal>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+    }
 }
