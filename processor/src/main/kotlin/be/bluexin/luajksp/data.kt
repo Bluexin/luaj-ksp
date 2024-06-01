@@ -1,9 +1,6 @@
 package be.bluexin.luajksp
 
-import be.bluexin.luajksp.annotations.LKExposed
-import be.bluexin.luajksp.annotations.LuajExclude
-import be.bluexin.luajksp.annotations.LuajExpose
-import be.bluexin.luajksp.annotations.LuajExposeExternal
+import be.bluexin.luajksp.annotations.*
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.isOpen
@@ -44,6 +41,8 @@ internal val ThreeArgFunctionName = ZeroArgFunctionName.peerClass("ThreeArgFunct
 internal val VarArgFunctionName = ZeroArgFunctionName.peerClass("VarArgFunction")
 internal val KotlinIterableName = ClassName("kotlin.collections", "Iterable")
 internal val LKExposedName = LKExposed::class.asClassName()
+internal val BeforeSetName = BeforeSet::class.asClassName()
+internal val AfterSetName = AfterSet::class.asClassName()
 
 internal sealed interface ExposedData {
     val simpleName: String

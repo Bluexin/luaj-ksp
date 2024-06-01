@@ -29,6 +29,9 @@ internal class KotlinAccessGenerator(
         properties: Map<String, ExposedData>
     ) {
         val receiverClassName = forDeclaration.simpleName.asString()
+        val superTypes = (forDeclaration as? KSClassDeclaration)?.getAllSuperTypes()?.toList().orEmpty()
+        val hasBeforeSet = superTypes.any { t -> t.toClassName() == BeforeSetName }
+        val hasAfterSet = superTypes.any { t -> t.toClassName() == AfterSetName }
 
         val target = forDeclaration.accessClassName
 
@@ -60,6 +63,10 @@ internal class KotlinAccessGenerator(
             .addModifiers(KModifier.OVERRIDE)
             .addParameter("key", LuaValueClassName)
             .addParameter("value", LuaValueClassName)
+            .apply {
+                if (hasAfterSet) beginControlFlow("try")
+                if (hasBeforeSet) addStatement("${wrapped.name}.beforeSet()")
+            }
             .beginControlFlow("when (key.checkjstring())").apply {
                 properties.values.filter { it is ExposedPropertyLike && it.hasSetter }.forEach {
                     addLuaToKotlin(it as ExposedPropertyLike, wrapped, functionWrappers)
@@ -69,7 +76,12 @@ internal class KotlinAccessGenerator(
                             if (parentName == LuaUserdataClassName) "error(\"Cannot set \$key on \${javaClass.simpleName}\")"
                             else "super.set(key, value)"
                 )
-            }.endControlFlow().build()
+            }.endControlFlow()
+            .apply {
+                if (hasAfterSet) nextControlFlow("finally")
+                    .addStatement("${wrapped.name}.afterSet()")
+                    .endControlFlow()
+            }.build()
 
         val frozenFunctionWrappers = functionWrappers.toMap()
         val getter = FunSpec.builder("get")
@@ -119,20 +131,19 @@ internal class KotlinAccessGenerator(
 
         FileSpec.builder(target)
             .indent("    ")
-            .addType(accessClass).apply {
-                if (forDeclaration !is KSClassDeclaration || forDeclaration.getAllSuperTypes()
-                        .none { it.toClassName() == LKExposedName }
-                ) {
-                    addFunction(
-                        FunSpec.builder("toLua")
-                            .receiver(receiverType)
-                            .returns(target)
-                            .addStatement("return %T(this)", target)
-                            .build()
-                    )
-                }
-            }.build()
-            .writeTo(codeGenerator, true)
+            .addType(accessClass).apply{
+            if (forDeclaration !is KSClassDeclaration || forDeclaration.getAllSuperTypes()
+                    .none { it.toClassName() == LKExposedName }
+            ) {
+                addFunction(
+                    FunSpec.builder("toLua")
+                        .receiver(receiverType)
+                        .returns(target)
+                        .addStatement("return %T(this)", target)
+                        .build()
+                )
+            }
+        }.build().writeTo(codeGenerator, true)
     }
 
     private val KSType.functionWrapperName
@@ -461,8 +472,14 @@ internal class KotlinAccessGenerator(
                             val bound = type.arguments.singleOrNull()?.type?.resolve()
                                 ?: error("Expected a single argument type", context)
 
-                            if (bound.declaration.isOpen() && bound.declaration.let { it !is KSClassDeclaration || it.getAllSuperTypes().none { t -> t.toClassName() == LKExposedName } }) {
-                                logger.warn("Exposing open type that does not implement $LKExposedName, this will not follow inheritance !", context)
+                            if (bound.declaration.isOpen() && bound.declaration.let {
+                                    it !is KSClassDeclaration || it.getAllSuperTypes()
+                                        .none { t -> t.toClassName() == LKExposedName }
+                                }) {
+                                logger.warn(
+                                    "Exposing open type that does not implement $LKExposedName, this will not follow inheritance !",
+                                    context
+                                )
                             }
 
                             val (nestedCall, nestedExtras) = kotlinToLua(
