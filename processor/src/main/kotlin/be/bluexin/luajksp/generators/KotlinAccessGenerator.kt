@@ -131,19 +131,19 @@ internal class KotlinAccessGenerator(
 
         FileSpec.builder(target)
             .indent("    ")
-            .addType(accessClass).apply{
-            if (forDeclaration !is KSClassDeclaration || forDeclaration.getAllSuperTypes()
-                    .none { it.toClassName() == LKExposedName }
-            ) {
-                addFunction(
-                    FunSpec.builder("toLua")
-                        .receiver(receiverType)
-                        .returns(target)
-                        .addStatement("return %T(this)", target)
-                        .build()
-                )
-            }
-        }.build().writeTo(codeGenerator, true)
+            .addType(accessClass).apply {
+                if (forDeclaration !is KSClassDeclaration || forDeclaration.getAllSuperTypes()
+                        .none { it.toClassName() == LKExposedName }
+                ) {
+                    addFunction(
+                        FunSpec.builder("toLua")
+                            .receiver(receiverType)
+                            .returns(target)
+                            .addStatement("return %T(this)", target)
+                            .build()
+                    )
+                }
+            }.build().writeTo(codeGenerator, true)
     }
 
     private val KSType.functionWrapperName
@@ -463,38 +463,46 @@ internal class KotlinAccessGenerator(
                     var call: String? = null
                     val typeDeclaration = type.declaration
                     if (typeDeclaration is KSClassDeclaration) {
-                        val superTypes = typeDeclaration.getAllSuperTypes()
-
-                        if (superTypes.any { it.toClassName() == KotlinIterableName }) {
-                            extras += LuaTableOfName
-                            extras += nestedReceiver
-
-                            val bound = type.arguments.singleOrNull()?.type?.resolve()
-                                ?: error("Expected a single argument type", context)
-
-                            if (bound.declaration.isOpen() && bound.declaration.let {
-                                    it !is KSClassDeclaration || it.getAllSuperTypes()
-                                        .none { t -> t.toClassName() == LKExposedName }
-                                }) {
-                                logger.warn(
-                                    "Exposing open type that does not implement $LKExposedName, this will not follow inheritance !",
-                                    context
-                                )
-                            }
-
-                            val (nestedCall, nestedExtras) = kotlinToLua(
-                                context,
-                                "element",
-                                bound,
-                                functionWrappers
-                            )
-
-                            extras.addAll(nestedExtras)
-
-                            call = "%M(emptyArray(), %L.map { element -> $nestedCall }.toTypedArray())"
-                        } else if (superTypes.any { it.toClassName() == LKExposedName }) {
+                        // Separated from supertypes as supertypes is expensive
+                        if (typeDeclaration.toClassName() == LKExposedName) {
                             extras += nestedReceiver
                             call = "%L.toLua()"
+                        } else {
+                            val superTypes = typeDeclaration.getAllSuperTypes()
+
+                            if (superTypes.any { it.toClassName() == KotlinIterableName }) {
+                                extras += LuaTableOfName
+                                extras += nestedReceiver
+
+                                val bound = type.arguments.singleOrNull()?.type?.resolve()
+                                    ?: error("Expected a single argument type", context)
+
+                                if (bound.declaration.isOpen() && bound.declaration.let {
+                                        it !is KSClassDeclaration || (
+                                                it.toClassName() != LKExposedName &&
+                                                        it.getAllSuperTypes().none { t -> t.toClassName() == LKExposedName }
+                                                )
+                                    }) {
+                                    logger.warn(
+                                        "Exposing open type that does not implement $LKExposedName, this will not follow inheritance !",
+                                        context
+                                    )
+                                }
+
+                                val (nestedCall, nestedExtras) = kotlinToLua(
+                                    context,
+                                    "element",
+                                    bound,
+                                    functionWrappers
+                                )
+
+                                extras.addAll(nestedExtras)
+
+                                call = "%M(emptyArray(), %L.map { element -> $nestedCall }.toTypedArray())"
+                            } else if (superTypes.any { it.toClassName() == LKExposedName }) {
+                                extras += nestedReceiver
+                                call = "%L.toLua()"
+                            }
                         }
                     }
 

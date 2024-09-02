@@ -282,4 +282,72 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
     }
+
+    @Test
+    fun `test iterable processing as LKExposed does not log warning`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaValue
+
+                    @LuajExpose
+                    class KClass(val list: List<LKExposed>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+    }
+
+    @Test
+    fun `test LKExposed is handled`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaValue
+
+                    @LuajExpose
+                    class KClass(val exposed: LKExposed)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+    }
+
+    @Test
+    fun `test LKExposed implementation is handled`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaValue
+
+                    @LuajExpose(LuajExpose.IncludeType.OPT_IN)
+                    open class NonFinal: LKExposed {
+                        override fun toLua(): LuaValue = TODO()
+                    }
+
+                    @LuajExpose
+                    class KClass(val exposed: NonFinal)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+    }
 }

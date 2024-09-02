@@ -8,12 +8,10 @@ import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.assertThrows
 import org.luaj.vm2.LuaError
 import org.luaj.vm2.LuaUserdata
-import org.luaj.vm2.LuaValue
-import org.luaj.vm2.lib.OneArgFunction
 import kotlin.test.*
 
 @OptIn(ExperimentalCompilerApi::class)
-class BeforeAfterSetTest: LKSymbolProcessorTest() {
+class BeforeAfterSetTest : LKSymbolProcessorTest() {
 
     @Test
     fun `test BeforeSet`() {
@@ -43,8 +41,8 @@ class BeforeAfterSetTest: LKSymbolProcessorTest() {
         }
 
         val slot = slot<String>()
-        val data = result.instance("TestClass", {s: String -> slot.captured = s })
-        val access = result.instance("access.TestClassAccess",  data)
+        val data = result.instance("TestClass", { s: String -> slot.captured = s })
+        val access = result.instance("access.TestClassAccess", data)
 
         assertIs<LuaUserdata>(access)
 
@@ -84,8 +82,8 @@ class BeforeAfterSetTest: LKSymbolProcessorTest() {
         }
 
         val slot = slot<String>()
-        val data = result.instance("TestClass", {s: String -> slot.captured = s })
-        val access = result.instance("access.TestClassAccess",  data)
+        val data = result.instance("TestClass", { s: String -> slot.captured = s })
+        val access = result.instance("access.TestClassAccess", data)
 
         assertIs<LuaUserdata>(access)
 
