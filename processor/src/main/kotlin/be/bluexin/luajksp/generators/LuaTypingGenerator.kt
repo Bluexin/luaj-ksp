@@ -1,9 +1,6 @@
 package be.bluexin.luajksp.generators
 
-import be.bluexin.luajksp.ExposedData
-import be.bluexin.luajksp.ExposedFunction
-import be.bluexin.luajksp.ExposedPropertyLike
-import be.bluexin.luajksp.KotlinIterableName
+import be.bluexin.luajksp.*
 import be.bluexin.luajksp.annotations.LuajExpose
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAllSuperTypes
@@ -91,23 +88,34 @@ internal class LuaTypingGenerator(
         "arg: ${luaType(arg.type!!.resolve())}"
     }
 
-    private fun luaType(type: KSType): String = when (val ts = type.declaration.simpleName.asString()) {
-        "String" -> "string"
-        "Int", "Double", "Long" -> "number"
-        "Boolean" -> "boolean"
-        "Unit" -> ""
-        else -> {
-            if (type.isFunctionType) "fun(${funArgs(type.arguments)})${funReturnType(type.arguments)}"
-            else {
-                val decl = type.declaration
-                if (decl is KSClassDeclaration && decl.getAllSuperTypes()
-                        .any { it.toClassName() == KotlinIterableName }
-                ) {
-                    val bound = type.arguments.singleOrNull()?.type?.resolve()
-                        ?: error("Expected a single argument type", type.declaration)
-                    "${luaType(bound)}[]"
-                } else ts
-            }
+    private fun luaTypeSimpleMapping(typeDecl: KSDeclaration): String? {
+        return when (typeDecl.simpleName.getShortName()) {
+            "String" -> "string"
+            "Int", "Double", "Long" -> "number"
+            "Boolean" -> "boolean"
+            "Unit" -> "void"
+            else -> if (typeDecl is KSClassDeclaration) {
+                when (typeDecl.toClassName()) {
+                    LuaValueClassName -> "any"
+                    LuaTableClassName -> "table"
+                    LuaFunctionClassName -> "function"
+                    else -> null
+                }
+            } else null
+        }
+    }
+
+    private fun luaType(type: KSType): String = luaTypeSimpleMapping(type.declaration) ?: run {
+        if (type.isFunctionType) "fun(${funArgs(type.arguments)})${funReturnType(type.arguments)}"
+        else {
+            val decl = type.declaration
+            if (decl is KSClassDeclaration && decl.getAllSuperTypes()
+                    .any { it.toClassName() == KotlinIterableName }
+            ) {
+                val bound = type.arguments.singleOrNull()?.type?.resolve()
+                    ?: error("Expected a single argument type", type.declaration)
+                "${luaType(bound)}[]"
+            } else type.declaration.simpleName.getShortName()
         }
     }
 

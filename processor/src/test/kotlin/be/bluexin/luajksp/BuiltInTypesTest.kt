@@ -9,8 +9,11 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.assertThrows
 import org.luaj.vm2.LuaFunction
+import org.luaj.vm2.LuaTable
 import org.luaj.vm2.LuaUserdata
 import org.luaj.vm2.LuaValue
+import org.luaj.vm2.LuaValue.tableOf
+import org.luaj.vm2.LuaValue.valueOf
 import org.luaj.vm2.Varargs
 import org.luaj.vm2.lib.OneArgFunction
 import org.luaj.vm2.lib.TwoArgFunction
@@ -56,7 +59,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         assertIs<OneArgFunction>(cb)
 
-        assertThrows<E> { cb.call(LuaValue.valueOf(42.0)) }
+        assertThrows<E> { cb.call(valueOf(42.0)) }
     }
 
     @Test
@@ -94,7 +97,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         val args = slot<Varargs>()
         val callback = mockk<LuaFunction> {
             every { checkfunction() } returns this
-            every { this@mockk.invoke(capture(args)) } returns LuaValue.valueOf(42)
+            every { this@mockk.invoke(capture(args)) } returns valueOf(42)
         }
 
         assertDoesNotThrow {
@@ -323,7 +326,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
-    }
+    } // TODO : support default args ? support lib function ?
 
     @Test
     fun `test LKExposed implementation is handled`() {
@@ -349,5 +352,126 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+    }
+
+    @Test
+    fun `test LuaValue is handled`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaValue
+
+                    @LuajExpose
+                    class KClass(var value: LuaValue)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        val value = valueOf(42)
+        val instance = result.instance("KClass", value)
+        val access = result.instance("access.KClassAccess", instance)
+
+        assertIs<LuaUserdata>(access)
+        val foundValue = access.get("value")
+        assertIs<LuaValue>(foundValue)
+        assertTrue(foundValue.isnumber())
+        assertEquals(42, foundValue.checkint())
+        assertSame(value, foundValue)
+
+        val newValue = valueOf("hello world")
+        access.set("value", newValue)
+
+        val newFoundValue = access.get("value")
+        assertIs<LuaValue>(newFoundValue)
+        assertTrue(newFoundValue.isstring())
+        assertEquals("hello world", newFoundValue.checkjstring())
+        assertSame(newValue, newFoundValue)
+    }
+
+    @Test
+    fun `test LuaTable is handled`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaTable
+
+                    @LuajExpose
+                    class KClass(var value: LuaTable)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        val value = tableOf(arrayOf(
+            valueOf("hello"), valueOf("world"),
+            valueOf("truth"), valueOf(42)
+        ))
+        val instance = result.instance("KClass", value)
+        val access = result.instance("access.KClassAccess", instance)
+
+        assertIs<LuaUserdata>(access)
+        val foundValue = access.get("value")
+        assertIs<LuaTable>(foundValue)
+        assertEquals("world", foundValue["hello"].checkjstring())
+        assertEquals(42, foundValue["truth"].checkint())
+        assertSame(value, foundValue)
+
+        val newValue = tableOf(arrayOf(valueOf("sweet"), valueOf("dreams")))
+        access.set("value", newValue)
+
+        val newFoundValue = access.get("value")
+        assertIs<LuaTable>(newFoundValue)
+        assertEquals("dreams", newFoundValue["sweet"].checkjstring())
+        assertSame(newValue, newFoundValue)
+    }
+
+    @Test
+    fun `test LuaFunction is handled`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+                    import be.bluexin.luajksp.annotations.LKExposed
+                    import org.luaj.vm2.LuaFunction
+
+                    @LuajExpose
+                    class KClass(var value: LuaFunction)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        val value = object : LuaFunction() {}
+        val instance = result.instance("KClass", value)
+        val access = result.instance("access.KClassAccess", instance)
+
+        assertIs<LuaUserdata>(access)
+        val foundValue = access.get("value")
+        assertIs<LuaFunction>(foundValue)
+        assertSame(value, foundValue)
+
+        val newValue = object : LuaFunction() {}
+        access.set("value", newValue)
+
+        val newFoundValue = access.get("value")
+        assertIs<LuaFunction>(newFoundValue)
+        assertSame(newValue, newFoundValue)
     }
 }

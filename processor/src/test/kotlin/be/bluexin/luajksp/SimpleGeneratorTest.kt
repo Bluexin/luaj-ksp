@@ -80,6 +80,7 @@ class SimpleGeneratorTest : LKSymbolProcessorTest() {
                     @LuajExpose
                     public class JClass {
                         private String text;
+                        private int truth;
                         
                         public String getText() {
                             return text;
@@ -88,6 +89,14 @@ class SimpleGeneratorTest : LKSymbolProcessorTest() {
                         public void setText(String text) {
                             this.text = text;
                         }       
+                        
+                        public int getTruth() {
+                            return truth;
+                        }
+                        
+                        public void setTruth(int truth) {
+                            this.truth = truth;
+                        }
                     }
                 """
         )
