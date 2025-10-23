@@ -8,22 +8,18 @@ import io.mockk.slot
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.assertThrows
-import org.luaj.vm2.LuaFunction
-import org.luaj.vm2.LuaTable
-import org.luaj.vm2.LuaUserdata
-import org.luaj.vm2.LuaValue
+import org.luaj.vm2.*
 import org.luaj.vm2.LuaValue.tableOf
 import org.luaj.vm2.LuaValue.valueOf
-import org.luaj.vm2.Varargs
 import org.luaj.vm2.lib.OneArgFunction
-import org.luaj.vm2.lib.TwoArgFunction
+import org.luaj.vm2.lib.ThreeArgFunction
 import org.luaj.vm2.lib.VarArgFunction
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.test.*
 
 @OptIn(ExperimentalCompilerApi::class)
-class BuiltInTypesTest: LKSymbolProcessorTest() {
+class BuiltInTypesTest : LKSymbolProcessorTest() {
 
     @Test
     fun `test unit return type KFunction processing`() {
@@ -32,7 +28,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
                     import be.bluexin.luajksp.annotations.LuajExpose
 
                     @LuajExpose
-                    class KClass(var cb: (Double) -> Unit)
+                    class KClass(var cb: (value: Double) -> Unit)
                 """
         )
 
@@ -47,9 +43,10 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
             result.classLoader.loadClass("access.KClassAccess")
         }
 
-        class E: Exception()
-        val data = result.instance("KClass", {_: Double -> throw E() })
-        val access = result.instance("access.KClassAccess",  data)
+        class E : Exception()
+
+        val data = result.instance("KClass", { _: Double -> throw E() })
+        val access = result.instance("access.KClassAccess", data)
 
         assertIs<LuaUserdata>(access)
 
@@ -60,6 +57,16 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertIs<OneArgFunction>(cb)
 
         assertThrows<E> { cb.call(valueOf(42.0)) }
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "cb: (value: number) => void")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field cb fun(value: number): void")
     }
 
     @Test
@@ -69,7 +76,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
                     import be.bluexin.luajksp.annotations.LuajExpose
 
                     @LuajExpose
-                    class KClass(var cb: (Int, Int, Int, Int) -> Int)
+                    class KClass(var cb: (one: Int, two: Int, Int, four: Int) -> Int)
                 """
         )
 
@@ -85,7 +92,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         }
 
         val data = result.instance("KClass", { _: Int, _: Int, _: Int, _: Int -> 0 })
-        val access = result.instance("access.KClassAccess",  data)
+        val access = result.instance("access.KClassAccess", data)
 
         assertIs<LuaUserdata>(access)
         val cb = assertDoesNotThrow {
@@ -122,6 +129,16 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertEquals(4, captured.arg(4).checkint())
 
         assertEquals("KClass", access.typename())
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "cb: (one: number, two: number, arg2: number, four: number) => number")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field cb fun(one: number, two: number, arg2: number, four: number): number")
     }
 
     @Test
@@ -131,7 +148,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
                     import be.bluexin.luajksp.annotations.LuajExpose
 
                     @LuajExpose
-                    data class KClass(var cb: KClass.(Int) -> Boolean)
+                    data class KClass(var cb: KClass.(value: Int, Double) -> Boolean)
                 """
         )
 
@@ -146,15 +163,15 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
             result.classLoader.loadClass("access.KClassAccess")
         }
 
-        val data = result.instance("KClass", { _: Any /* yes, hax */, _: Int -> false })
-        val access = result.instance("access.KClassAccess",  data)
+        val data = result.instance("KClass", { _: Any /* yes, hax */, _: Int, _: Double -> false })
+        val access = result.instance("access.KClassAccess", data)
 
         assertIs<LuaUserdata>(access)
         val cb = assertDoesNotThrow {
             access.get("cb")
         }
 
-        assertIs<TwoArgFunction>(cb)
+        assertIs<ThreeArgFunction>(cb)
 
         val args = slot<Varargs>()
         val callback = mockk<LuaFunction> {
@@ -170,31 +187,43 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertNotNull(cbProp)
         assertIs<KProperty1<Any, *>>(cbProp) // Just to make compiler happy, this has no value
         val wrappedCb = cbProp(data)
-        assertIs<Any.(Int) -> Boolean>(wrappedCb) // will only check for Function2
-        val res = wrappedCb(data, 42)
+        assertIs<Any.(Int, Double) -> Boolean>(wrappedCb) // will only check for Function2
+        val res = wrappedCb(data, 42, 13.37)
         assertIs<Boolean>(res)
         assertTrue(res)
 
         assertTrue(args.isCaptured)
         val captured = args.captured
-        assertEquals(2, captured.narg())
+        assertEquals(3, captured.narg())
         assertEquals(access, captured.arg1())
         assertEquals(42, captured.arg(2).checkint())
+        assertEquals(13.37, captured.arg(3).checkdouble())
 
-        val data2 = result.instance("KClass", { _: Any /* yes, hax */, _: Int -> false })
+        val data2 = result.instance("KClass", { _: Any /* yes, hax */, _: Int, _: Double -> false })
 
         args.clear()
-        val res2 = wrappedCb(data2, 71)
+        val res2 = wrappedCb(data2, 71, 84.3)
         assertIs<Boolean>(res2)
         assertTrue(res2)
 
         assertTrue(args.isCaptured)
         val captured2 = args.captured
-        assertEquals(2, captured2.narg())
+        assertEquals(3, captured2.narg())
         assertNotEquals(access, captured2.arg1())
         assertEquals(71, captured2.arg(2).checkint())
+        assertEquals(84.3, captured2.arg(3).checkdouble())
 
         assertEquals("KClass", access.typename())
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "cb: (this: KClass, value: number, arg1: number) => boolean")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field cb fun(self: KClass, value: number, arg1: number): boolean")
     }
 
     @Test
@@ -221,7 +250,7 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         val input = listOf("hello", "world")
         val data = result.instance("KClass", input)
-        val access = result.instance("access.KClassAccess",  data)
+        val access = result.instance("access.KClassAccess", data)
 
         assertIs<LuaUserdata>(access)
 
@@ -236,6 +265,16 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
             assertTrue(v.isstring(), "Unexpected type at index $index: ${v.typename()}")
             assertEquals(s, v.checkjstring(), "Unexpected value at index $index")
         }
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "list: string[]")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field list string[]")
     }
 
     @Test
@@ -257,7 +296,20 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
 
         // Diagnostics
-        assertContains(result.messages, "Exposing open type that does not implement be.bluexin.luajksp.annotations.LKExposed, this will not follow inheritance !")
+        assertContains(
+            result.messages,
+            "Exposing open type that does not implement be.bluexin.luajksp.annotations.LKExposed, this will not follow inheritance !"
+        )
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "list: NonFinal[]")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field list NonFinal[]")
     }
 
     @Test
@@ -284,6 +336,14 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "list: NonFinal[]")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field list NonFinal[]")
     }
 
     @Test
@@ -305,6 +365,14 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "list: LKExposed[]")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field list LKExposed[]")
     }
 
     @Test
@@ -326,6 +394,14 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "exposed: LKExposed")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field exposed LKExposed")
     } // TODO : support default args ? support lib function ?
 
     @Test
@@ -352,6 +428,14 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
 
         // Diagnostics
         assertFalse("Exposing open type" in result.messages, "Expected to not find a warning in the logs")
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "exposed: NonFinal")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field exposed NonFinal")
     }
 
     @Test
@@ -393,6 +477,14 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertTrue(newFoundValue.isstring())
         assertEquals("hello world", newFoundValue.checkjstring())
         assertSame(newValue, newFoundValue)
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "value: any")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field value any")
     }
 
     @Test
@@ -415,10 +507,12 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         // Diagnostics
         assertContains(result.messages, "Generating access.KClassAccess for KClass")
 
-        val value = tableOf(arrayOf(
-            valueOf("hello"), valueOf("world"),
-            valueOf("truth"), valueOf(42)
-        ))
+        val value = tableOf(
+            arrayOf(
+                valueOf("hello"), valueOf("world"),
+                valueOf("truth"), valueOf(42)
+            )
+        )
         val instance = result.instance("KClass", value)
         val access = result.instance("access.KClassAccess", instance)
 
@@ -436,6 +530,14 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         assertIs<LuaTable>(newFoundValue)
         assertEquals("dreams", newFoundValue["sweet"].checkjstring())
         assertSame(newValue, newFoundValue)
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "value: Record<string, any>")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field value table")
     }
 
     @Test
@@ -473,5 +575,13 @@ class BuiltInTypesTest: LKSymbolProcessorTest() {
         val newFoundValue = access.get("value")
         assertIs<LuaFunction>(newFoundValue)
         assertSame(newValue, newFoundValue)
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "value: (...args: any[]) => any")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field value function")
     }
 }

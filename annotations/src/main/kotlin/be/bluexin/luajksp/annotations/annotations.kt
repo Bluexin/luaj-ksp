@@ -55,5 +55,9 @@ annotation class LuajExposeExternal(
 @Retention(AnnotationRetention.RUNTIME) // TODO : don't forget to test on TYPE
 @Target(AnnotationTarget.TYPEALIAS, AnnotationTarget.CLASS, AnnotationTarget.TYPE)
 annotation class LuajMapped(
-    val mapper: KClass<out LKMapper<*>>
+    val mapper: KClass<out LKMapper<*>>,
+    /**
+     * Import statement to use for this type.
+     */
+    val import: String = ""
 )

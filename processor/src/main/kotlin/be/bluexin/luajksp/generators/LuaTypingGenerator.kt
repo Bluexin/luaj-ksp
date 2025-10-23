@@ -4,6 +4,7 @@ import be.bluexin.luajksp.*
 import be.bluexin.luajksp.annotations.LuajExpose
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAllSuperTypes
+import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.isAnnotationPresent
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
@@ -51,7 +52,7 @@ internal class LuaTypingGenerator(
                             is ExposedPropertyLike ->
                                 """|--- ${accessor.docString.kdocToLDoc()}
                                 |--- ${if (accessor.hasSetter) "mutable" else "immutable"}
-                                |--- @field ${accessor.simpleName} ${luaType(accessor.type.resolve())}"""
+                                |--- @field ${accessor.simpleName} ${luaType(accessor.type)}"""
 
                             is ExposedFunction ->
                                 """|--- ${accessor.docString.kdocToLDoc()}
@@ -68,24 +69,38 @@ internal class LuaTypingGenerator(
         }
     }
 
-    private fun funReturnType(decl: KSFunctionDeclaration): String = decl.returnType?.resolve()
+    private fun funReturnType(decl: KSFunctionDeclaration): String = decl.returnType
         ?.let(::luaType)
         ?.takeIf(String::isNotEmpty)
         ?.let { ": $it" }
         ?: ""
 
     private fun funArgs(decl: KSFunctionDeclaration): String = decl.parameters.joinToString { param ->
-        "${param.name?.let(KSName::getShortName) ?: "arg"}: ${luaType(param.type.resolve())}"
+        "${param.name?.let(KSName::getShortName) ?: "arg"}: ${luaType(param.type)}"
     }
 
-    private fun funReturnType(decl: List<KSTypeArgument>): String = decl.last().type?.resolve()
+    private fun funReturnType(decl: List<KSTypeArgument>): String = decl.last().type
         ?.let(::luaType)
         ?.takeIf(String::isNotEmpty)
         ?.let { ": $it" }
         ?: ""
 
-    private fun funArgs(decl: List<KSTypeArgument>): String = decl.take(decl.size - 1).joinToString { arg ->
-        "arg: ${luaType(arg.type!!.resolve())}"
+    private fun funArgs(decl: List<KSTypeArgument>): List<Pair<String, String>> =
+        decl.dropLast(1).mapIndexed { i, arg ->
+            val argName = arg.getAnnotationsByType(ParameterName::class)
+                .singleOrNull()?.name ?: "arg$i"
+            argName to luaType(arg.type!!)
+        }
+
+    private fun functionTypeSignature(type: KSTypeReference, resolved: KSType): String {
+        val args = buildList {
+            val receiver = (type.element as? KSCallableReference)?.receiverType
+            if (receiver != null) {
+                add("self" to luaType(receiver))
+                addAll(funArgs(resolved.arguments.drop(1)))
+            } else addAll(funArgs(resolved.arguments))
+        }.joinToString { (name, type) -> "$name: $type" }
+        return "fun($args)${funReturnType(resolved.arguments)}"
     }
 
     private fun luaTypeSimpleMapping(typeDecl: KSDeclaration): String? {
@@ -105,17 +120,19 @@ internal class LuaTypingGenerator(
         }
     }
 
-    private fun luaType(type: KSType): String = luaTypeSimpleMapping(type.declaration) ?: run {
-        if (type.isFunctionType) "fun(${funArgs(type.arguments)})${funReturnType(type.arguments)}"
-        else {
-            val decl = type.declaration
-            if (decl is KSClassDeclaration && decl.getAllSuperTypes()
-                    .any { it.toClassName() == KotlinIterableName }
-            ) {
-                val bound = type.arguments.singleOrNull()?.type?.resolve()
-                    ?: error("Expected a single argument type", type.declaration)
+    private fun luaType(type: KSTypeReference): String {
+        val resolved = type.resolve()
+        luaTypeSimpleMapping(resolved.declaration)?.let { return it }
+
+        return if (resolved.isFunctionType) {
+            functionTypeSignature(type, resolved)
+        } else {
+            val decl = resolved.declaration
+            if (decl is KSClassDeclaration && decl.getAllSuperTypes().any { it.toClassName() == KotlinIterableName }) {
+                val bound = resolved.arguments.singleOrNull()?.type
+                    ?: error("Expected a single argument type", resolved.declaration)
                 "${luaType(bound)}[]"
-            } else type.declaration.simpleName.getShortName()
+            } else resolved.declaration.simpleName.getShortName()
         }
     }
 
