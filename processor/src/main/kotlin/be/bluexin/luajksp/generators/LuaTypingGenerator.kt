@@ -106,7 +106,7 @@ internal class LuaTypingGenerator(
     private fun luaTypeSimpleMapping(typeDecl: KSDeclaration): String? {
         return when (typeDecl.simpleName.getShortName()) {
             "String" -> "string"
-            "Int", "Double", "Long" -> "number"
+            "Int", "Double", "Long", "Float" -> "number"
             "Boolean" -> "boolean"
             "Unit" -> "void"
             else -> if (typeDecl is KSClassDeclaration) {

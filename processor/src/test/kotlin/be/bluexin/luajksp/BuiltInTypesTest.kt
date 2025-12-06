@@ -1,5 +1,6 @@
 package be.bluexin.luajksp
 
+import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
 import io.mockk.every
@@ -14,6 +15,7 @@ import org.luaj.vm2.LuaValue.valueOf
 import org.luaj.vm2.lib.OneArgFunction
 import org.luaj.vm2.lib.ThreeArgFunction
 import org.luaj.vm2.lib.VarArgFunction
+import org.luaj.vm2.lib.jse.CoerceJavaToLua
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.test.*
@@ -21,8 +23,208 @@ import kotlin.test.*
 @OptIn(ExperimentalCompilerApi::class)
 class BuiltInTypesTest : LKSymbolProcessorTest() {
 
+    fun `set up simple type test`(
+        kType: String,
+        expectedTsType: String,
+        expectedLuaType: String
+    ): JvmCompilationResult {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(var cb: $kType)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        assertDoesNotThrow {
+            result.classLoader.loadClass("access.KClassAccess")
+        }
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "cb: $expectedTsType")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field cb $expectedLuaType")
+
+        return result
+    }
+
     @Test
-    fun `test unit return type KFunction processing`() {
+    fun `process Int type`() {
+        val result = `set up simple type test`("Int", "number", "number")
+
+        val data = result.instance("KClass", 42)
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.isint())
+        assertEquals(42, cb.checkint())
+        assertIs<LuaInteger>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce(23))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Int>?
+        assertNotNull(f)
+        assertEquals(23, f(data))
+    }
+
+    @Test
+    fun `process Long type`() {
+        val result = `set up simple type test`("Long", "number", "number")
+
+        val data = result.instance("KClass", 420_000_000_000L)
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.islong())
+        assertEquals(420_000_000_000L, cb.checklong())
+        assertIs<LuaDouble>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce(23L.toDouble()))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Long>?
+        assertNotNull(f)
+        assertEquals(23L, f(data))
+    }
+
+    @Test
+    fun `process Double type`() {
+        val result = `set up simple type test`("Double", "number", "number")
+
+        val data = result.instance("KClass", 42.5)
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.isnumber())
+        assertEquals(42.5, cb.checkdouble())
+        assertIs<LuaDouble>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce(23.5))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Double>?
+        assertNotNull(f)
+        assertEquals(23.5, f(data))
+    }
+
+    @Test
+    fun `process Float type`() {
+        val result = `set up simple type test`("Float", "number", "number")
+
+        val data = result.instance("KClass", 42.5f)
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.isnumber())
+        assertEquals(42.5f, cb.checkdouble().toFloat())
+        assertIs<LuaDouble>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce(23.5f))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Float>?
+        assertNotNull(f)
+        assertEquals(23.5f, f(data))
+    }
+
+    @Test
+    fun `process Boolean type`() {
+        val result = `set up simple type test`("Boolean", "boolean", "boolean")
+
+        val data = result.instance("KClass", false)
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.isboolean())
+        assertEquals(false, cb.checkboolean())
+        assertIs<LuaBoolean>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce(true))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Boolean>?
+        assertNotNull(f)
+        assertEquals(true, f(data))
+    }
+
+    @Test
+    fun `process String type`() {
+        val result = `set up simple type test`("String", "string", "string")
+
+        val data = result.instance("KClass", "hello")
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.isstring())
+        assertEquals("hello", cb.checkjstring())
+        assertIs<LuaString>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce("world"))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, String>?
+        assertNotNull(f)
+        assertEquals("world", f(data))
+    }
+
+    @Test
+    fun `process unit return type KFunction processing`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -70,7 +272,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test high arity KFunction processing`() {
+    fun `process high arity KFunction processing`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -142,7 +344,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test receiver KFunction processing`() {
+    fun `process receiver KFunction processing`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -227,7 +429,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test iterable processing`() {
+    fun `process iterable processing`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -278,7 +480,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test iterable processing for non final class that does not implement LKExposed logs warning`() {
+    fun `process iterable processing for non final class that does not implement LKExposed logs warning`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -313,7 +515,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test iterable processing for non final class that implements LKExposed does not log warning`() {
+    fun `process iterable processing for non final class that implements LKExposed does not log warning`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -347,7 +549,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test iterable processing as LKExposed does not log warning`() {
+    fun `process iterable processing as LKExposed does not log warning`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -376,7 +578,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test LKExposed is handled`() {
+    fun `process LKExposed is handled`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -405,7 +607,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     } // TODO : support default args ? support lib function ?
 
     @Test
-    fun `test LKExposed implementation is handled`() {
+    fun `process LKExposed implementation is handled`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -439,7 +641,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test LuaValue is handled`() {
+    fun `process LuaValue is handled`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -488,7 +690,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test LuaTable is handled`() {
+    fun `process LuaTable is handled`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
@@ -541,7 +743,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `test LuaFunction is handled`() {
+    fun `process LuaFunction is handled`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose

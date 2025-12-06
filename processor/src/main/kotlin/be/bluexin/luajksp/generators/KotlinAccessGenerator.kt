@@ -173,6 +173,7 @@ internal class KotlinAccessGenerator(
             "Long" -> "%L.checklong()"
             "Boolean" -> "%L.checkboolean()"
             "Double" -> "%L.checkdouble()"
+            "Float" -> "%L.checkdouble().toFloat()"
             else -> if (typeDecl is KSClassDeclaration) {
                 when (typeDecl.toClassName()) {
                     LuaValueClassName -> "%L"
@@ -448,10 +449,10 @@ internal class KotlinAccessGenerator(
                 "%M(%L)"
             }
 
-            "Long" -> {
-                extras += CoerceJavaToLuaName
+            "Long", "Float" -> {
+                extras += LuaValueOfName
                 extras += nestedReceiver
-                "%M(%L)"
+                "%M(%L.toDouble())"
             }
 
             else -> {
