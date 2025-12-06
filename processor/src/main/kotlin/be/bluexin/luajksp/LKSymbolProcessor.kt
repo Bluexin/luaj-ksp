@@ -26,14 +26,15 @@ class LKSymbolProcessor(
     }
 
     private fun processInternal(resolver: Resolver): List<KSAnnotated> = resolver
-        .getSymbolsWithAnnotation(LuajExpose::class.qualifiedName!!).filterNot {
-            if ((it is KSClassDeclaration) && it.validate()) {
+        .getSymbolsWithAnnotation(LuajExpose::class.qualifiedName!!)
+        .filter { it is KSClassDeclaration }.filter {
+            if (it.validate()) {
                 it.accept(LKVisitor.Internal(it.expose!!, logger), mutableMapOf())
                     .also { props -> kotlinGen.generate(it as KSDeclaration, props) }
                     .also { props -> luaGen.generate(it as KSDeclaration, props) }
                     .also { props -> tsGen.generate(it as KSDeclaration, props) }
-                true
-            } else false
+                false
+            } else true
         }.toList()
 
     private fun processExternal(resolver: Resolver): List<KSAnnotated> = resolver
