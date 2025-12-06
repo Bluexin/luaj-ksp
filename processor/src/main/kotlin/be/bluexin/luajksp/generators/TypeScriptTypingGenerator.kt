@@ -50,9 +50,9 @@ internal class TypeScriptTypingGenerator(
             file.appendTs(
                 """
                 |// Generated with luaj-ksp
-                |${forDeclaration.docString.kdocToTsDoc(indent = "")}
                 |${referencedTypes.joinToString("\n") { "import {${it.first}} from \"./${it.second}\";" }}
                 |
+                |${forDeclaration.docString.kdocToTsDoc(indent = "")}
                 |/** @noSelf **/
                 |${buildInterfaceHeader(forDeclaration, targetClassName)} {
                 |${

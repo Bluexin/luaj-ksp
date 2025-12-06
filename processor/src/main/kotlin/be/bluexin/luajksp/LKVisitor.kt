@@ -14,13 +14,23 @@ internal sealed class LKVisitor(
     protected var rootDeclaration: KSDeclaration? = null
     private var hasVisitedClass = false
 
+    private inline fun tryVisit(type: String, what: Any, body: () -> Unit) {
+        try {
+            body()
+        } catch (e: IllegalStateException) {
+            throw IllegalStateException("Couldn't visit $type $what", e)
+        }
+    }
+
     override fun visitClassDeclaration(
         classDeclaration: KSClassDeclaration,
         data: MutableMap<String, ExposedData>
     ): Map<String, ExposedData> {
         if (hasVisitedClass) return data
         else hasVisitedClass = true
-        classDeclaration.declarations.forEach { it.accept(this, data) }
+        tryVisit("class", classDeclaration) {
+            classDeclaration.declarations.forEach { it.accept(this, data) }
+        }
         return data
     }
 
@@ -29,7 +39,7 @@ internal sealed class LKVisitor(
         data: MutableMap<String, ExposedData>
     ): Map<String, ExposedData> {
         logger.logging("Visiting fn $function")
-        if (function.include) {
+        if (function.include) tryVisit("function", "$function in ${function.parentDeclaration}") {
             (ExposedPropertyLike.FromKSFunctions.fromFunction(function)
                 ?: ExposedFunction(function))
                 .let(data::addExposed)
@@ -42,7 +52,11 @@ internal sealed class LKVisitor(
         data: MutableMap<String, ExposedData>
     ): Map<String, ExposedData> {
         logger.logging("Visiting property $property")
-        if (property.isPublic() && property.include) data.addExposed(ExposedPropertyLike.FromKSProperty(property))
+        if (property.isPublic() && property.include) {
+            tryVisit("property", "$property in ${property.parentDeclaration}") {
+                data.addExposed(ExposedPropertyLike.FromKSProperty(property))
+            }
+        }
         return data
     }
 
