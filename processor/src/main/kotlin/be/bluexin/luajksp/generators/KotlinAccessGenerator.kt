@@ -39,7 +39,7 @@ internal class KotlinAccessGenerator(
             forDeclaration.superTypes
                 .mapNotNull { it.resolve().declaration as? KSClassDeclaration }
                 .singleOrNull {
-                    it.classKind == ClassKind.CLASS && it.isAnnotationPresent(LuajExpose::class)
+                    it.isAnnotationPresent(LuajExpose::class)
                 }?.accessClassName
         } else null) ?: LuaUserdataClassName
 
