@@ -17,6 +17,7 @@ abstract class LKSymbolProcessorTest {
         inheritClassPath = true
         messageOutputStream = System.out // see diagnostics in real time
         kspWithCompilation = true
+        kspArgs += "packagePaths" to "legacy.pkg=legacy"
     }.compile()
 
     protected fun JvmCompilationResult.instance(clazz: String, vararg args: Any?): Any = assertDoesNotThrow {

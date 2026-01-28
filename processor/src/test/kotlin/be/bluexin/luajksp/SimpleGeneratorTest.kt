@@ -1,9 +1,10 @@
 package be.bluexin.luajksp
 
-import com.tschuchort.compiletesting.*
+import com.tschuchort.compiletesting.KotlinCompilation
+import com.tschuchort.compiletesting.SourceFile
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.luaj.vm2.LuaUserdata
-import java.util.UUID
+import java.util.*
 import kotlin.test.*
 
 @OptIn(ExperimentalCompilerApi::class)
@@ -33,6 +34,70 @@ class SimpleGeneratorTest : LKSymbolProcessorTest() {
         assertTrue(accessClazz.declaredMethods.any { it.name == "get" })
         assertTrue(accessClazz.declaredMethods.any { it.name == "set" })
         assertTrue(LuaUserdata::class.java.isAssignableFrom(accessClazz))
+    }
+
+    @Test
+    fun `test simple kotlin processing with package`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    package pkg
+
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(var text: String)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating pkg.access.KClassAccess for KClass")
+
+        // Load compiled classes and inspect generated code through reflection
+        val kClazz = result.classLoader.loadClass("pkg.KClass")
+        val accessClazz = result.classLoader.loadClass("pkg.access.KClassAccess")
+        assertTrue(accessClazz.declaredMethods.any { it.name == "get" })
+        assertTrue(accessClazz.declaredMethods.any { it.name == "set" })
+        assertTrue(LuaUserdata::class.java.isAssignableFrom(accessClazz))
+
+        val typings = result.typings("KClass")
+        assertContains(typings, GeneratedTypings.TYPESCRIPT)
+        assertContains(typings, GeneratedTypings.LUA)
+    }
+
+    @Test
+    fun `test simple kotlin processing with mapped package`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    package legacy.pkg
+
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(var text: String)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating legacy.pkg.access.KClassAccess for KClass")
+
+        // Load compiled classes and inspect generated code through reflection
+        val kClazz = result.classLoader.loadClass("legacy.pkg.KClass")
+        val accessClazz = result.classLoader.loadClass("legacy.pkg.access.KClassAccess")
+        assertTrue(accessClazz.declaredMethods.any { it.name == "get" })
+        assertTrue(accessClazz.declaredMethods.any { it.name == "set" })
+        assertTrue(LuaUserdata::class.java.isAssignableFrom(accessClazz))
+
+        val typings = result.typings("legacy/KClass")
+        assertContains(typings, GeneratedTypings.TYPESCRIPT)
+        assertContains(typings, GeneratedTypings.LUA)
     }
 
     @Test

@@ -23,14 +23,20 @@ private typealias Import = Pair<String, String>
 @OptIn(KspExperimental::class)
 internal class TypeScriptTypingGenerator(
     private val codeGenerator: CodeGenerator,
-    private val logger: KSPLogger
+    private val logger: KSPLogger,
+    private val packagePaths: Map<String, String>,
 ) {
+    private fun findDir(targetPackageName: String): String = packagePaths
+        .firstNotNullOfOrNull { (packageName, path) ->
+            if (targetPackageName.startsWith(packageName)) "$path/" else null
+        } ?: ""
 
     fun generate(
         forDeclaration: KSDeclaration,
         properties: Map<String, ExposedData>
     ) {
         val targetClassName = forDeclaration.simpleName.asString()
+        val dir = findDir(forDeclaration.packageName.asString())
 
         logger.info("Generating TypeScript typing for $targetClassName", forDeclaration)
         logger.logging("Properties : $properties")
@@ -44,13 +50,22 @@ internal class TypeScriptTypingGenerator(
         // Use an interface as it best maps the exposed API shape.
         codeGenerator.createNewFileByPath(
             Dependencies(true, forDeclaration.containingFile!!),
-            path = "typings/$targetClassName",
+            path = "typings/$dir$targetClassName",
             extensionName = "d.ts",
         ).use { file ->
             file.appendTs(
                 """
                 |// Generated with luaj-ksp
-                |${referencedTypes.joinToString("\n") { "import {${it.first}} from \"./${it.second}\";" }}
+                |${
+                    referencedTypes.joinToString("\n") {
+                        val importPath = when {
+                            dir.isEmpty() -> "./${it.second}"
+                            it.second.startsWith(dir) -> "./${it.second.removePrefix(dir)}"
+                            else -> dir.split("/").dropLast(1).joinToString(separator = "") { "../" } + it.second
+                        }
+                        "import {${it.first}} from \"${importPath}\";"
+                    }
+                }
                 |
                 |${forDeclaration.docString.kdocToTsDoc(indent = "")}
                 |/** @noSelf **/
@@ -186,7 +201,7 @@ internal class TypeScriptTypingGenerator(
         val result = mutableSetOf<Import>()
 
         // extends base type
-        baseTypeName(forDeclaration)?.let { result += it to it }
+        baseTypeName(forDeclaration)?.let { result += it.first to "${it.second}${it.first}" }
 
         properties.values.forEach { accessor ->
             when (accessor) {
@@ -201,12 +216,15 @@ internal class TypeScriptTypingGenerator(
         return result
     }
 
-    private fun baseTypeName(forDeclaration: KSDeclaration): String? =
+    private fun baseTypeName(forDeclaration: KSDeclaration): Pair<String, String>? =
         if (forDeclaration is KSClassDeclaration) {
-            forDeclaration.superTypes
+            val st = forDeclaration.superTypes
                 .mapNotNull { it.resolve().declaration as? KSClassDeclaration }
                 .singleOrNull { it.classKind == ClassKind.CLASS && it.isAnnotationPresent(LuajExpose::class) }
-                ?.simpleName?.getShortName()?.takeIf(String::isNotBlank)
+
+            st?.let {
+                it.simpleName.getShortName() to findDir(it.packageName.asString())
+            }
         } else null
 
     private fun addTypeRefNames(out: MutableSet<Import>, typeRef: KSTypeReference) {
@@ -226,12 +244,12 @@ internal class TypeScriptTypingGenerator(
             return
         }
         val shortName = decl.simpleName.getShortName()
-        val name = typeRef.getAnnotationsByType(LuajMapped::class)
+        val qualifiedName = typeRef.getAnnotationsByType(LuajMapped::class)
             .ifEmpty { decl.getAnnotationsByType(LuajMapped::class) }
             .map { it.import.takeIf(String::isNotBlank) }
             .firstOrNull()
-            ?: shortName
-        out += shortName to name
+            ?: "${findDir(decl.packageName.asString())}${shortName}"
+        out += shortName to qualifiedName
     }
     // endregion
 }

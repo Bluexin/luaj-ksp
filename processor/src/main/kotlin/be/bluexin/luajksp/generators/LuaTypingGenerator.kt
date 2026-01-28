@@ -21,16 +21,25 @@ internal class LuaTypingGenerator(
 
     fun generate(
         forDeclaration: KSDeclaration,
-        properties: Map<String, ExposedData>
+        properties: Map<String, ExposedData>,
+        packagePaths: Map<String, String>
     ) {
         val targetClassName = forDeclaration.simpleName.asString()
+        val targetPackageName = forDeclaration.packageName.asString()
+        val dir = packagePaths.firstNotNullOfOrNull { (packageName, path) ->
+            if (targetPackageName.startsWith(packageName)) "$path/" else null
+        } ?: ""
+        val filePath = "lualib/$dir$targetClassName"
 
-        logger.info("Generating Lua typing for $targetClassName", forDeclaration)
+        logger.warn(
+            "Generating Lua typing for $targetClassName (${forDeclaration.qualifiedName?.asString()}) to $filePath",
+            forDeclaration
+        )
         logger.logging("Properties : $properties")
 
         codeGenerator.createNewFileByPath(
-            Dependencies(true, forDeclaration.containingFile!!),
-            "lualib/$targetClassName",
+            dependencies = Dependencies(true, forDeclaration.containingFile!!),
+            path = filePath,
             extensionName = "lua",
         ).use { file ->
             file.appendLua(

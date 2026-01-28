@@ -14,12 +14,17 @@ import com.google.devtools.ksp.validate
 
 class LKSymbolProcessor(
     codeGenerator: CodeGenerator,
-    private val logger: KSPLogger
+    private val logger: KSPLogger,
+    private val packagePaths: Map<String, String>
 ) : SymbolProcessor {
 
     private val kotlinGen = KotlinAccessGenerator(codeGenerator, logger)
     private val luaGen = LuaTypingGenerator(codeGenerator, logger)
-    private val tsGen = TypeScriptTypingGenerator(codeGenerator, logger)
+    private val tsGen = TypeScriptTypingGenerator(codeGenerator, logger, packagePaths)
+
+    init {
+        logger.warn("Package Paths : $packagePaths")
+    }
 
     override fun process(resolver: Resolver): List<KSAnnotated> {
         return processInternal(resolver) + processExternal(resolver)
@@ -31,7 +36,7 @@ class LKSymbolProcessor(
             if (it.validate()) {
                 it.accept(LKVisitor.Internal(it.expose!!, logger), mutableMapOf())
                     .also { props -> kotlinGen.generate(it as KSDeclaration, props) }
-                    .also { props -> luaGen.generate(it as KSDeclaration, props) }
+                    .also { props -> luaGen.generate(it as KSDeclaration, props, packagePaths) }
                     .also { props -> tsGen.generate(it as KSDeclaration, props) }
                 false
             } else true
@@ -42,7 +47,7 @@ class LKSymbolProcessor(
             if ((it is KSTypeAlias) && it.validate()) {
                 it.accept(LKVisitor.External(it.exposeExternal!!, logger), mutableMapOf())
                     .also { props -> kotlinGen.generate(it as KSDeclaration, props) }
-                    .also { props -> luaGen.generate(it as KSDeclaration, props) }
+                    .also { props -> luaGen.generate(it as KSDeclaration, props, packagePaths) }
                     .also { props -> tsGen.generate(it as KSDeclaration, props) }
                 true
             } else false
@@ -50,7 +55,9 @@ class LKSymbolProcessor(
 
     class Provider : SymbolProcessorProvider {
         override fun create(environment: SymbolProcessorEnvironment) = LKSymbolProcessor(
-            environment.codeGenerator, environment.logger
+            environment.codeGenerator, environment.logger,
+            packagePaths = environment.options["packagePaths"]?.split(",")
+                ?.associate { it.split("=").let { (k, v) -> k to v } } ?: emptyMap()
         )
     }
 }
