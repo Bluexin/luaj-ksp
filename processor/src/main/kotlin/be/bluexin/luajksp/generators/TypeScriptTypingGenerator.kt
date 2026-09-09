@@ -61,7 +61,7 @@ internal class TypeScriptTypingGenerator(
                         val importPath = when {
                             dir.isEmpty() -> "./${it.second}"
                             it.second.startsWith(dir) -> "./${it.second.removePrefix(dir)}"
-                            else -> dir.split("/").dropLast(1).joinToString(separator = "") { "../" } + it.second
+                            else -> dir.split("/").dropLast(1).joinToString(separator = "") { "../../" } + it.second
                         }
                         "import {${it.first}} from \"${importPath}\";"
                     }
