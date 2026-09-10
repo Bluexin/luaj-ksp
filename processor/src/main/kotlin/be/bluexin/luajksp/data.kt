@@ -3,11 +3,8 @@ package be.bluexin.luajksp
 import be.bluexin.luajksp.annotations.*
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.getAnnotationsByType
-import com.google.devtools.ksp.isOpen
-import com.google.devtools.ksp.isPublic
 import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName.Companion.member
 import com.squareup.kotlinpoet.asClassName
 import java.util.*
@@ -17,6 +14,9 @@ internal val KSAnnotated.expose: LuajExpose? get() = getAnnotationsByType(LuajEx
 
 @OptIn(KspExperimental::class)
 internal val KSAnnotated.exposeExternal: LuajExposeExternal? get() = getAnnotationsByType(LuajExposeExternal::class).singleOrNull()
+
+@OptIn(KspExperimental::class)
+internal val KSAnnotated.lib: LuajLib? get() = getAnnotationsByType(LuajLib::class).singleOrNull()
 
 @OptIn(KspExperimental::class)
 internal val KSAnnotated.exclude: LuajExclude? get() = getAnnotationsByType(LuajExclude::class).singleOrNull()
@@ -34,7 +34,6 @@ internal val LuaTableOfName = LuaValueClassName.member("tableOf")
 internal val LuaFunctionClassName = LuaUserdataClassName.peerClass("LuaFunction")
 internal val LuaVarargsClassName = LuaUserdataClassName.peerClass("Varargs")
 internal val LuaTableClassName = LuaUserdataClassName.peerClass("LuaTable")
-internal val CoerceJavaToLuaName = ClassName("org.luaj.vm2.lib.jse", "CoerceJavaToLua").member("coerce")
 internal val ZeroArgFunctionName = ClassName("org.luaj.vm2.lib", "ZeroArgFunction")
 internal val OneArgFunctionName = ZeroArgFunctionName.peerClass("OneArgFunction")
 internal val TwoArgFunctionName = ZeroArgFunctionName.peerClass("TwoArgFunction")

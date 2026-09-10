@@ -2,6 +2,7 @@ package be.bluexin.luajksp.sample
 
 import org.intellij.lang.annotations.Language
 import org.luaj.vm2.LuaValue
+import org.luaj.vm2.lib.TwoArgFunction
 import java.io.File
 import kotlin.test.fail
 
@@ -19,14 +20,15 @@ val Any?.quoteIfNeeded get() = when (this) {
 
 fun LuaJTest.runTestScript(
     @Language("lua") snippet: String,
-    testValue: LuaValue
+    testValue: LuaValue,
+    libs: List<TwoArgFunction> = emptyList()
 ): ScriptResult {
     val fullScript = """
         |$luaAssertionSupport
         |$snippet
     """.trimMargin()
     return runScript(
-        "test", fullScript
+        "test", fullScript, libs = libs
     ) {
         mapOf("testValue" to testValue)
     }

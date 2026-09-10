@@ -1,6 +1,5 @@
 package be.bluexin.luajksp.sample
 
-import io.github.oshai.kotlinlogging.KotlinLogging
 import org.intellij.lang.annotations.Language
 import org.luaj.vm2.*
 import org.luaj.vm2.compiler.LuaC
@@ -11,8 +10,6 @@ import org.luaj.vm2.lib.jse.JseStringLib
 
 // TODO : check BCEL for lua-to-(jvm bytecode) compilation -- see LuaJC::install
 object LuaJTest {
-    private val logger = KotlinLogging.logger {  }
-
     private val scriptInstructionsLimit = LuaValue.valueOf(50_000) // TODO: evaluate proper limit
 
     private val serverGlobals = Globals().apply {
@@ -39,7 +36,11 @@ object LuaJTest {
         return setHook
     }
 
-    private fun getEnvFor(script: String, context: () -> Map<String, LuaValue>) = scriptGlobals.getOrPut(script) {
+    private fun getEnvFor(
+        script: String,
+        context: () -> Map<String, LuaValue>,
+        libs: List<TwoArgFunction> = emptyList()
+    ) = scriptGlobals.getOrPut(script) {
         val globals = Globals().apply {
             load(JseBaseLib())
             load(PackageLib())
@@ -48,6 +49,7 @@ object LuaJTest {
             load(JseStringLib())
             load(JseMathLib())
             load(TestLib(context()))
+            libs.forEach { load(it) }
         }
         val setHook = globals.enableDebugSafely()
 
@@ -60,12 +62,13 @@ object LuaJTest {
         }
     }
 
-    fun loadChunk(key: String, @Language("lua") snippet: String): LuaValue {
-        return serverGlobals.load(snippet, "=$key")
-    }
-
-    fun runScript(key: String, @Language("lua") snippet: String, context: () -> Map<String, LuaValue> = ::emptyMap): ScriptResult {
-        val (userGlobals, setHook) = getEnvFor(key, context)
+    fun runScript(
+        key: String,
+        @Language("lua") snippet: String,
+        libs: List<TwoArgFunction> = emptyList(),
+        context: () -> Map<String, LuaValue> = ::emptyMap
+    ): ScriptResult {
+        val (userGlobals, setHook) = getEnvFor(key, context, libs)
         val chunk = serverGlobals.load(snippet, "=$key", userGlobals)
         val userThread = LuaThread(userGlobals, chunk)
         setHook(

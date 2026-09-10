@@ -3,7 +3,7 @@ package be.bluexin.luajksp.annotations
 import kotlin.reflect.KClass
 
 /**
- * Mark a class, property or function for exposition to LuaJ.
+ * Mark a class, property, or function for exposition to LuaJ.
  */
 @Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY, AnnotationTarget.CLASS)
@@ -37,7 +37,7 @@ annotation class LuajExpose(
 annotation class LuajExclude
 
 /**
- * Marks a typealias for exposition to LuaJ.
+ * Mark a typealias for exposition to LuaJ.
  */
 @Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.TYPEALIAS)
@@ -46,6 +46,23 @@ annotation class LuajExposeExternal(
      * Whitelist of properties to expose
      */
     vararg val whitelist: String
+)
+
+/**
+ * Mark a class as a Lua library module.
+ *
+ * The annotated class will get a generated `<ClassName>Lib : TwoArgFunction` that installs a table
+ * under a global with the given [name], following the standard Lua library pattern.
+ *
+ * Only members annotated with [LuajExpose] are included; only functions are supported for now.
+ */
+@Retention(AnnotationRetention.RUNTIME)
+@Target(AnnotationTarget.CLASS)
+annotation class LuajLib(
+    /**
+     * Name of the global the library registers itself under.
+     */
+    val name: String
 )
 
 /**

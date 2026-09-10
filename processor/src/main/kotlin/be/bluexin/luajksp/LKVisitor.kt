@@ -14,7 +14,7 @@ internal sealed class LKVisitor(
     protected var rootDeclaration: KSDeclaration? = null
     private var hasVisitedClass = false
 
-    private inline fun tryVisit(type: String, what: Any, body: () -> Unit) {
+    protected inline fun tryVisit(type: String, what: Any, body: () -> Unit) {
         try {
             body()
         } catch (e: IllegalStateException) {
@@ -121,6 +121,28 @@ internal sealed class LKVisitor(
 
             rootDeclaration = typeAlias
             return typeAlias.type.resolve().declaration.accept(this, data)
+        }
+    }
+
+    class Lib(
+        logger: KSPLogger
+    ) : LKVisitor(logger) {
+
+        override val KSPropertyDeclaration.include: Boolean
+            get() = false
+
+        override val KSFunctionDeclaration.include: Boolean
+            get() = !isConstructor() && exclude == null && expose != null
+
+        override fun visitFunctionDeclaration(
+            function: KSFunctionDeclaration,
+            data: MutableMap<String, ExposedData>
+        ): Map<String, ExposedData> {
+            logger.logging("Visiting fn $function")
+            if (function.include) tryVisit("function", "$function in ${function.parentDeclaration}") {
+                data.addExposed(ExposedFunction(function))
+            }
+            return data
         }
     }
 }
