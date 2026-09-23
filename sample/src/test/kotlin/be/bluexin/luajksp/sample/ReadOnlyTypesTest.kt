@@ -8,11 +8,8 @@ import org.intellij.lang.annotations.Language
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
-import kotlin.test.BeforeTest
+import kotlin.test.*
 import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
 
 class ReadOnlyTypesTest {
 
@@ -147,6 +144,24 @@ class ReadOnlyTypesTest {
         }
     }
 
+    @Test
+    fun `reading on map type is ok`() {
+        val test = ReadOnlyTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                |--- @type ReadOnlyTypesHolder
+                |local t = testing.testValue
+                ${
+                test.map.entries.joinToString(separator = "\n") { (k, v) ->
+                    "|assert_equals($v, t.map['$k'], 'map[$k]')"
+                }
+            }
+            |""".trimMargin(),
+            test.toLua()
+        ).executionErrorAsFailure()
+    }
+
     @LuajExpose
     data class ReadOnlyTypesHolder(
         val text: String = UUID.randomUUID().toString(),
@@ -156,7 +171,8 @@ class ReadOnlyTypesTest {
         val double: Double = Random.nextDouble(),
         val nullableText: String? = null,
         val uuid: ExposedUUID = UUID.randomUUID(),
-        val list: List<String> = listOf("hello", "world")
+        val list: List<String> = listOf("hello", "world"),
+        val map: Map<String, Int> = mapOf("one" to 1, "two" to 2)
     ) {
 
         /**

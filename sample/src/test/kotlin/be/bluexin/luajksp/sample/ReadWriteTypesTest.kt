@@ -7,11 +7,8 @@ import org.intellij.lang.annotations.Language
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KProperty0
-import kotlin.test.BeforeTest
+import kotlin.test.*
 import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
 
 class ReadWriteTypesTest {
 
@@ -154,6 +151,22 @@ class ReadWriteTypesTest {
     }
 
     @Test
+    fun `writing on map type is ok`() {
+        val test = ReadWriteTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                --- @type ReadWriteTypesHolder
+                local t = testing.testValue
+                t.map = { foo = 3, bar = 4 }
+            """.trimIndent(),
+            test.toLua()
+        ).executionErrorAsFailure()
+
+        assertEquals(mapOf("foo" to 3, "bar" to 4), test.map)
+    }
+
+    @Test
     fun `writing a callback with named function works as expected`() {
         val test = ReadWriteTypesHolder()
 
@@ -180,7 +193,8 @@ class ReadWriteTypesTest {
         var double: Double = Random.nextDouble(),
         var nullableText: String? = null,
         val javaHolder: JavaPropertyLikeHolder = JavaPropertyLikeHolder(),
-        var sum: (Int, Int) -> Int = {_, _, -> error("Not implemented") }
+        var sum: (Int, Int) -> Int = { _, _ -> error("Not implemented") },
+        var map: Map<String, Int> = mapOf("one" to 1, "two" to 2)
     ) {
 
         /**

@@ -192,7 +192,15 @@ internal class TypeScriptTypingGenerator(
             functionTypeSignature(type, resolved)
         } else {
             val decl = resolved.declaration
-            if (decl is KSClassDeclaration && decl.getAllSuperTypes().any { it.toClassName() == KotlinIterableName }) {
+            if (decl is KSClassDeclaration && decl.isMapType()) {
+                val keyBound = resolved.arguments.getOrNull(0)?.type
+                    ?: error("Expected a key type argument", resolved.declaration)
+                val valueBound = resolved.arguments.getOrNull(1)?.type
+                    ?: error("Expected a value type argument", resolved.declaration)
+                "Record<${tsType(keyBound)}, ${tsType(valueBound)}>"
+            } else if (decl is KSClassDeclaration && decl.getAllSuperTypes()
+                    .any { it.toClassName() == KotlinIterableName }
+            ) {
                 val bound = resolved.arguments.singleOrNull()?.type
                     ?: error("Expected a single argument type", resolved.declaration)
                 "${tsType(bound)}[]"
@@ -258,6 +266,11 @@ internal class TypeScriptTypingGenerator(
             return
         }
         val decl = type.declaration
+        if (decl is KSClassDeclaration && decl.isMapType()) {
+            type.arguments.getOrNull(0)?.type?.let { addTypeRefNames(out, it) }
+            type.arguments.getOrNull(1)?.type?.let { addTypeRefNames(out, it) }
+            return
+        }
         if (decl is KSClassDeclaration && decl.getAllSuperTypes().any { it.toClassName() == KotlinIterableName }) {
             val bound = type.arguments.singleOrNull()?.type ?: return
             addTypeRefNames(out, bound)

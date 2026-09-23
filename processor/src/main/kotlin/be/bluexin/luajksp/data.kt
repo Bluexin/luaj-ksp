@@ -2,11 +2,13 @@ package be.bluexin.luajksp
 
 import be.bluexin.luajksp.annotations.*
 import com.google.devtools.ksp.KspExperimental
+import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.MemberName.Companion.member
 import com.squareup.kotlinpoet.asClassName
+import com.squareup.kotlinpoet.ksp.toClassName
 import java.util.*
 
 @OptIn(KspExperimental::class)
@@ -40,6 +42,16 @@ internal val TwoArgFunctionName = ZeroArgFunctionName.peerClass("TwoArgFunction"
 internal val ThreeArgFunctionName = ZeroArgFunctionName.peerClass("ThreeArgFunction")
 internal val VarArgFunctionName = ZeroArgFunctionName.peerClass("VarArgFunction")
 internal val KotlinIterableName = ClassName("kotlin.collections", "Iterable")
+internal val KotlinMapName = ClassName("kotlin.collections", "Map")
+
+/**
+ * Unlike [List]/[Iterable], a property or parameter can be typed directly as `Map<K, V>` - in which
+ * case its declaration *is* [KotlinMapName], and won't show up in its own [getAllSuperTypes]. So Map
+ * detection must check both the declaration itself and its supertypes (for custom Map implementations).
+ */
+internal fun KSClassDeclaration.isMapType(): Boolean =
+    toClassName() == KotlinMapName || getAllSuperTypes().any { it.toClassName() == KotlinMapName }
+
 internal val LKExposedName = LKExposed::class.asClassName()
 internal val BeforeSetName = BeforeSet::class.asClassName()
 internal val AfterSetName = AfterSet::class.asClassName()

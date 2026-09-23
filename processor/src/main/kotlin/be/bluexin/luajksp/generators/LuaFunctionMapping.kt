@@ -71,7 +71,22 @@ internal class LuaFunctionMapping(
                 } else error("Functions frozen", context)
             } else {
                 val typeDeclaration = type.declaration
-                if (typeDeclaration.isExposed) {
+                if (typeDeclaration is KSClassDeclaration && typeDeclaration.isMapType()) {
+                    val keyBound = type.arguments.getOrNull(0)?.type?.resolve()
+                        ?: error("Expected a key type argument", context)
+                    val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
+                        ?: error("Expected a value type argument", context)
+
+                    val (keyCall, keyExtras) = luaToKotlin(context, "key", keyBound, wrapped, functionWrappers)
+                    val (valueCall, valueExtras) = luaToKotlin(
+                        context, "t.get(key)", valueBound, wrapped, functionWrappers
+                    )
+
+                    extras.addAll(keyExtras)
+                    extras.addAll(valueExtras)
+
+                    "%L.checktable().let { t -> t.keys().associate { key -> $keyCall to $valueCall } }"
+                } else if (typeDeclaration.isExposed) {
                     extras += typeDeclaration.accessClassName
                     extras += typeDeclaration.accessClassName
                     extras += wrapped
@@ -345,18 +360,7 @@ internal class LuaFunctionMapping(
                                         val bound = type.arguments.singleOrNull()?.type?.resolve()
                                             ?: error("Expected a single argument type", context)
 
-                                        if (bound.declaration.isOpen() && bound.declaration.let {
-                                                it !is KSClassDeclaration || (
-                                                        it.toClassName() != LKExposedName &&
-                                                                it.getAllSuperTypes()
-                                                                    .none { t -> t.toClassName() == LKExposedName }
-                                                        )
-                                            }) {
-                                            logger.warn(
-                                                "Exposing open type that does not implement $LKExposedName, this will not follow inheritance !",
-                                                context
-                                            )
-                                        }
+                                        warnIfOpenNotExposed(bound, context)
 
                                         val (nestedCall, nestedExtras) = kotlinToLua(
                                             context,
@@ -368,6 +372,43 @@ internal class LuaFunctionMapping(
                                         extras.addAll(nestedExtras)
 
                                         call = "%M(emptyArray(), %L.map { element -> $nestedCall }.toTypedArray())"
+                                    }
+
+                                    typeDeclaration.isMapType() -> {
+                                        extras += LuaTableOfName
+                                        extras += nestedReceiver
+
+                                        val keyBound = type.arguments.getOrNull(0)?.type?.resolve()
+                                            ?: error("Expected a key type argument", context)
+                                        val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
+                                            ?: error("Expected a value type argument", context)
+
+                                        warnIfOpenNotExposed(keyBound, context)
+                                        warnIfOpenNotExposed(valueBound, context)
+
+                                        val (keyCall, keyExtras) = kotlinToLua(
+                                            context,
+                                            "entry.key",
+                                            keyBound,
+                                            functionWrappers
+                                        )
+                                        val (valueCall, valueExtras) = kotlinToLua(
+                                            context,
+                                            "entry.value",
+                                            valueBound,
+                                            functionWrappers
+                                        )
+
+                                        extras.addAll(keyExtras)
+                                        extras.addAll(valueExtras)
+
+                                        // LuaTable's (keys, values) constructor does *not* take parallel
+                                        // key/value arrays: the first array is a flat, interleaved
+                                        // [key0, value0, key1, value1, ...] list (as for a `{[k]=v, ...}`
+                                        // table constructor), and the second is a plain positional/array
+                                        // part - which we don't use here.
+                                        call = "%M(%L.entries.flatMap { entry -> " +
+                                                "listOf($keyCall, $valueCall) }.toTypedArray(), emptyArray())"
                                     }
 
                                     superTypes.any { it.toClassName() == LKExposedName } -> {
@@ -403,6 +444,21 @@ internal class LuaFunctionMapping(
         } else call(receiver)
 
         return withNullability to extras
+    }
+
+    private fun warnIfOpenNotExposed(bound: KSType, context: KSNode) {
+        if (bound.declaration.isOpen() && bound.declaration.let {
+                it !is KSClassDeclaration || (
+                        it.toClassName() != LKExposedName &&
+                                it.getAllSuperTypes()
+                                    .none { t -> t.toClassName() == LKExposedName }
+                        )
+            }) {
+            logger.warn(
+                "Exposing open type that does not implement $LKExposedName, this will not follow inheritance !",
+                context
+            )
+        }
     }
 
     private val KSAnnotated.isExposed

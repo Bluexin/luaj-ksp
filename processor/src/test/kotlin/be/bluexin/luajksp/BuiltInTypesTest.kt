@@ -636,6 +636,126 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
+    fun `process map processing`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(var map: Map<String, Int>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        // Diagnostics
+        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+
+        assertDoesNotThrow {
+            result.classLoader.loadClass("access.KClassAccess")
+        }
+
+        val input = mapOf("hello" to 1, "world" to 2)
+        val data = result.instance("KClass", input)
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val map = assertDoesNotThrow {
+            access.get("map")
+        }
+
+        assertTrue(map.istable())
+
+        input.forEach { (k, v) ->
+            val luaValue = map.get(valueOf(k))
+            assertTrue(luaValue.isint(), "Unexpected type for key $k: ${luaValue.typename()}")
+            assertEquals(v, luaValue.checkint(), "Unexpected value for key $k")
+        }
+
+        val newTable = tableOf(
+            arrayOf(valueOf("foo"), valueOf(3), valueOf("bar"), valueOf(4)),
+            emptyArray()
+        )
+        assertDoesNotThrow {
+            access.set("map", newTable)
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Map<String, Int>>?
+        assertNotNull(f)
+        assertEquals(mapOf("foo" to 3, "bar" to 4), f(data))
+
+        val typings = result.typings("KClass")
+
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "map: Record<string, number>")
+
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field map table<string, number>")
+    }
+
+    @Test
+    fun `process map of exposed values is handled`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class Value(val text: String)
+
+                    @LuajExpose
+                    class KClass(val map: Map<String, Value>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "map: Record<string, Value>")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field map table<string, Value>")
+
+        val data = result.instance("KClass", mapOf("a" to result.instance("Value", "hello")))
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val map = assertDoesNotThrow { access.get("map") }
+        assertTrue(map.istable())
+
+        val entry = map.get(valueOf("a"))
+        assertIs<LuaUserdata>(entry)
+        assertEquals("hello", entry.get("text").checkjstring())
+    }
+
+    @Test
+    fun `process map with wildcard type arguments is unsupported`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(val map: Map<*, *>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertNotEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        assertContains(result.messages, "Unsupported type Any?")
+    }
+
+    @Test
     fun `process LKExposed is handled`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
