@@ -14,7 +14,19 @@ import com.google.devtools.ksp.symbol.*
 import com.squareup.kotlinpoet.ksp.toClassName
 import java.io.OutputStream
 
-private typealias Import = Pair<String, String>
+/**
+ * @param name Short type name to import.
+ * @param path Import path/prefix : for a generated type, the `dir`-relative path built by
+ * [TypeScriptTypingGenerator.findDir] ; for a hand-written library type (a `@LuajMapped`'s explicit
+ * `import` argument, e.g. `"support"`), the bare module name as it should be imported from the
+ * *package root* - not from wherever this particular typing file happens to be generated under.
+ * @param isLibraryImport Whether [path] names a hand-written library module (package-root-relative)
+ * rather than another generated typing (co-located with this one under the packaged `generated/`
+ * directory - see the `prepareNpmTypings` Gradle task in the consuming project). This affects how
+ * many `../` segments are needed : a hand-written library file always sits one level *above* the
+ * whole `generated/` tree, on top of however many `dir` subdirectories this typing itself is under.
+ */
+private data class Import(val name: String, val path: String, val isLibraryImport: Boolean = false)
 
 /**
  * Generates minimal TypeScript declaration files (.d.ts) for use with TypeScriptToLua.
@@ -43,8 +55,8 @@ internal class TypeScriptTypingGenerator(
 
         // Collect import dependencies
         val referencedTypes = collectImports(forDeclaration, properties)
-            .filterNot { it.first == targetClassName }
-            .toSortedSet { a, b -> a.first.compareTo(b.first) }
+            .filterNot { it.name == targetClassName }
+            .toSortedSet { a, b -> a.name.compareTo(b.name) }
 
         // We generate a .d.ts per exposed root symbol.
         // Use an interface as it best maps the exposed API shape.
@@ -57,13 +69,21 @@ internal class TypeScriptTypingGenerator(
                 """
                 |// Generated with luaj-ksp
                 |${
-                    referencedTypes.joinToString("\n") {
+                    referencedTypes.joinToString("\n") { ref ->
                         val importPath = when {
-                            dir.isEmpty() -> "./${it.second}"
-                            it.second.startsWith(dir) -> "./${it.second.removePrefix(dir)}"
-                            else -> dir.split("/").dropLast(1).joinToString(separator = "") { "../../" } + it.second
+                            ref.isLibraryImport -> {
+                                // Escape however many `dir` subdirectories this typing is under,
+                                // plus one more to escape the packaged `generated/` directory itself
+                                // and reach the hand-written library file at the package root.
+                                val levels = dir.count { c -> c == '/' } + 1
+                                "../".repeat(levels) + ref.path
+                            }
+
+                            dir.isEmpty() -> "./${ref.path}"
+                            ref.path.startsWith(dir) -> "./${ref.path.removePrefix(dir)}"
+                            else -> dir.split("/").dropLast(1).joinToString(separator = "") { "../../" } + ref.path
                         }
-                        "import {${it.first}} from \"${importPath}\";"
+                        "import {${ref.name}} from \"${importPath}\";"
                     }
                 }
                 |
@@ -201,7 +221,7 @@ internal class TypeScriptTypingGenerator(
         val result = mutableSetOf<Import>()
 
         // extends base type
-        baseTypeName(forDeclaration)?.let { result += it.first to "${it.second}${it.first}" }
+        baseTypeName(forDeclaration)?.let { (name, dir) -> result += Import(name, "$dir$name") }
 
         properties.values.forEach { accessor ->
             when (accessor) {
@@ -244,12 +264,15 @@ internal class TypeScriptTypingGenerator(
             return
         }
         val shortName = decl.simpleName.getShortName()
-        val qualifiedName = typeRef.getAnnotationsByType(LuajMapped::class)
+        val libraryImport = typeRef.getAnnotationsByType(LuajMapped::class)
             .ifEmpty { decl.getAnnotationsByType(LuajMapped::class) }
             .map { it.import.takeIf(String::isNotBlank) }
             .firstOrNull()
-            ?: "${findDir(decl.packageName.asString())}${shortName}"
-        out += shortName to qualifiedName
+        out += if (libraryImport != null) {
+            Import(shortName, libraryImport, isLibraryImport = true)
+        } else {
+            Import(shortName, "${findDir(decl.packageName.asString())}${shortName}")
+        }
     }
     // endregion
 }

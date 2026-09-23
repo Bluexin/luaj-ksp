@@ -91,6 +91,13 @@ internal class LuaFunctionMapping(
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
     ) {
+        // These wrapper classes always hold a definite, non-null function value - nullability of the
+        // *property* they back is handled by the caller (luaToKotlin/kotlinToLua's own null-checking
+        // prefix), before a wrapper instance is ever constructed or referenced. Using the property's
+        // possibly-nullable `type` directly here would emit a nullable supertype (illegal in Kotlin)
+        // and a nullable `ktFunction` field invoked without `?.invoke()` (also illegal).
+        val nonNullType = type.makeNotNullable()
+
         val args = type.arguments.take(type.arguments.size - 1) // removing return type
         val isLuaVararg = args.size > 3
         val returnType = type.arguments.last().type!!.resolve()
@@ -103,7 +110,7 @@ internal class LuaFunctionMapping(
         builder.addType(
             TypeSpec.classBuilder(name)
                 .addModifiers(KModifier.PRIVATE)
-                .addSuperinterface(type.toTypeName())
+                .addSuperinterface(nonNullType.toTypeName())
                 .primaryConstructor(
                     FunSpec.constructorBuilder()
                         .addParameter(luaFunction.name, luaFunction.type)
@@ -148,14 +155,14 @@ internal class LuaFunctionMapping(
                 ).build()
         )
 
-        val ktFunction = PropertySpec.builder("ktFunction", type.toTypeName())
+        val ktFunction = PropertySpec.builder("ktFunction", nonNullType.toTypeName())
             .initializer("ktFunction")
             .build()
 
         builder.addType(
             TypeSpec.classBuilder("K2L$name")
                 .addModifiers(KModifier.PRIVATE)
-                .superclass(type.toLuaFnSuperType(context))
+                .superclass(nonNullType.toLuaFnSuperType(context))
                 .primaryConstructor(
                     FunSpec.constructorBuilder()
                         .addParameter(ktFunction.name, ktFunction.type)

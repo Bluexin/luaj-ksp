@@ -272,6 +272,64 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
+    fun `process nullable KFunction processing`() {
+        // Regression test : a nullable function-typed property used to generate invalid Kotlin -
+        // a nullable supertype on the generated wrapper class, and a direct (non-`?.invoke()`) call
+        // on a nullable `ktFunction` field - because the wrapper classes were built from the
+        // property's own (possibly nullable) KSType instead of its non-nullable equivalent.
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(var cb: ((value: Double) -> Boolean)?)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        assertDoesNotThrow {
+            result.classLoader.loadClass("access.KClassAccess")
+        }
+
+        // Starts out null : the Lua side should see nil, not a wrapper around nothing.
+        val nullData = result.instance("KClass", null)
+        val nullAccess = result.instance("access.KClassAccess", nullData)
+        assertIs<LuaUserdata>(nullAccess)
+        assertTrue(assertDoesNotThrow { nullAccess.get("cb") }.isnil())
+
+        // A Kotlin-assigned lambda is readable and callable from Lua.
+        val data = result.instance("KClass", { value: Double -> value > 10.0 })
+        val access = result.instance("access.KClassAccess", data)
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow { access.get("cb") }
+        assertIs<OneArgFunction>(cb)
+        assertEquals(LuaValue.TRUE, cb.call(valueOf(42.0)))
+        assertEquals(LuaValue.FALSE, cb.call(valueOf(1.0)))
+
+        // A Lua-assigned function is readable and callable from Kotlin.
+        val luaCallback = mockk<LuaFunction> {
+            every { isnil() } returns false
+            every { checkfunction() } returns this
+            every { this@mockk.invoke(any<Varargs>()) } returns valueOf(true)
+        }
+        assertDoesNotThrow { access.set("cb", luaCallback) }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, ((Double) -> Boolean)?>?
+        assertNotNull(f)
+        val wrapped = assertNotNull(f(data))
+        assertTrue(wrapped(0.0))
+
+        // Setting nil from Lua clears it back to null on the Kotlin side.
+        assertDoesNotThrow { access.set("cb", LuaValue.NIL) }
+        assertNull(f(data))
+    }
+
+    @Test
     fun `process high arity KFunction processing`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
