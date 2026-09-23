@@ -153,9 +153,9 @@ internal class KotlinAccessGenerator(
         val type = typeRef.resolve()
         logger.logging("Processing $typeRef (resolved to `$type`) for $this", typeRef)
 
-        val (call, extras) = mapping.luaToKotlin(it.source, "value", type, wrapped, functionWrappers)
+        val block = mapping.luaToKotlin(it.source, "value", type, wrapped, functionWrappers)
 
-        addStatement("%S -> %N.%L = $call", it.simpleName, wrapped, it.simpleName, *extras.toTypedArray())
+        addStatement("%S -> %N.%L = %L", it.simpleName, wrapped, it.simpleName, block)
     }
 
     private fun FunSpec.Builder.addGetFunction(

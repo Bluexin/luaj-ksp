@@ -36,38 +36,29 @@ internal class LuaFunctionMapping(
         type: KSType,
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
-    ): Pair<String, List<Any>> {
-        val extras = mutableListOf<Any>(receiver)
-        val nullability = if (type.nullability == Nullability.NULLABLE) {
-            extras += receiver
-            "if (%L.isnil()) null else "
-        } else ""
-
+    ): CodeBlock {
         val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
             it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
                 .qualifiedName?.asString() == LuajMapped::class.qualifiedName
         }
-        val call = if (customMapper != null) {
+
+        val body: CodeBlock = if (customMapper != null) {
             val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
-            extras.removeFirst()
-            extras += mapper.toTypeName()
-            extras += receiver
             when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
-                ClassKind.OBJECT -> "%T.fromLua(%L.checknotnil())"
-                ClassKind.CLASS -> "%T().fromLua(%L.checknotnil())"
+                ClassKind.OBJECT -> CodeBlock.of("%T.fromLua(%L.checknotnil())", mapper.toTypeName(), receiver)
+                ClassKind.CLASS -> CodeBlock.of("%T().fromLua(%L.checknotnil())", mapper.toTypeName(), receiver)
                 else -> error("Unsupported class kind : $ck", customMapper)
             }
-        } else luaToKotlinSimpleMapping(type.declaration) ?: run {
+        } else luaToKotlinSimpleMapping(type.declaration)?.let { CodeBlock.of(it, receiver) } ?: run {
             if (type.isFunctionType) {
                 logger.warn("Found function type", type.declaration)
                 if (functionWrappers is MutableMap) {
                     val wrapperName = type.functionWrapperName()
                     functionWrappers[wrapperName] = type
-                    extras += wrapperName
-                    extras += receiver
-                    extras += wrapperName
-                    extras += receiver
-                    "if (%L is K2L%N) %L.ktFunction else %N(%L.checkfunction())"
+                    CodeBlock.of(
+                        "if (%L is K2L%N) %L.ktFunction else %N(%L.checkfunction())",
+                        receiver, wrapperName, receiver, wrapperName, receiver
+                    )
                 } else error("Functions frozen", context)
             } else {
                 val typeDeclaration = type.declaration
@@ -77,25 +68,25 @@ internal class LuaFunctionMapping(
                     val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
                         ?: error("Expected a value type argument", context)
 
-                    val (keyCall, keyExtras) = luaToKotlin(context, "key", keyBound, wrapped, functionWrappers)
-                    val (valueCall, valueExtras) = luaToKotlin(
-                        context, "t.get(key)", valueBound, wrapped, functionWrappers
+                    val keyBlock = luaToKotlin(context, "key", keyBound, wrapped, functionWrappers)
+                    val valueBlock = luaToKotlin(context, "t.get(key)", valueBound, wrapped, functionWrappers)
+
+                    CodeBlock.of(
+                        "%L.checktable().let { t -> t.keys().associate { key -> %L to %L } }",
+                        receiver, keyBlock, valueBlock
                     )
-
-                    extras.addAll(keyExtras)
-                    extras.addAll(valueExtras)
-
-                    "%L.checktable().let { t -> t.keys().associate { key -> $keyCall to $valueCall } }"
                 } else if (typeDeclaration.isExposed) {
-                    extras += typeDeclaration.accessClassName
-                    extras += typeDeclaration.accessClassName
-                    extras += wrapped
-                    "(%L.checkuserdata(%T::class.java) as %T).%N"
+                    CodeBlock.of(
+                        "(%L.checkuserdata(%T::class.java) as %T).%N",
+                        receiver, typeDeclaration.accessClassName, typeDeclaration.accessClassName, wrapped
+                    )
                 } else type.unsupportedTypeError(context)
             }
         }
 
-        return "$nullability$call" to extras
+        return if (type.nullability == Nullability.NULLABLE)
+            CodeBlock.of("if (%L.isnil()) null else %L", receiver, body)
+        else body
     }
 
     fun addFunctionWrapper(
@@ -139,7 +130,7 @@ internal class LuaFunctionMapping(
                             val luaArgs = mutableListOf<String>()
                             args.forEachIndexed { index, arg ->
                                 addParameter("arg$index", arg.toTypeName())
-                                val (call, extras) = kotlinToLua(
+                                val block = kotlinToLua(
                                     context,
                                     "arg$index",
                                     arg.type!!.resolve(),
@@ -147,7 +138,7 @@ internal class LuaFunctionMapping(
                                 )
                                 val luaArg = "luaArg$index"
                                 luaArgs += luaArg
-                                addStatement("val $luaArg = $call", *extras.toTypedArray())
+                                addStatement("val %L = %L", luaArg, block)
                             }
 
                             addStatement(
@@ -157,14 +148,14 @@ internal class LuaFunctionMapping(
 
                             if (isReturnUnit) addStatement("return Unit")
                             else {
-                                val (retCall, extras) = luaToKotlin(
+                                val block = luaToKotlin(
                                     context,
                                     "ret",
                                     returnType,
                                     wrapped,
                                     functionWrappers
                                 )
-                                addStatement("return $retCall", *extras.toTypedArray())
+                                addStatement("return %L", block)
                             }
                         }.build()
                 ).build()
@@ -193,7 +184,7 @@ internal class LuaFunctionMapping(
                             if (isLuaVararg) addParameter("args", LuaVarargsClassName)
                             args.forEachIndexed { index, arg ->
                                 if (!isLuaVararg) addParameter("arg$index", LuaValueClassName)
-                                val (call, extras) = luaToKotlin(
+                                val block = luaToKotlin(
                                     context,
                                     if (isLuaVararg) "args.arg(${index + 1})" else "arg$index",
                                     arg.type!!.resolve(),
@@ -202,15 +193,15 @@ internal class LuaFunctionMapping(
                                 )
                                 val ktArg = "luaArg$index"
                                 ktArgs += ktArg
-                                addStatement("val $ktArg = $call", *extras.toTypedArray())
+                                addStatement("val %L = %L", ktArg, block)
                             }
 
                             addStatement("val ret = %N(${ktArgs.joinToString()})", ktFunction)
 
                             if (isReturnUnit) addStatement("return %M", LuaValueClassName.member("NONE"))
                             else {
-                                val (retCall, extras) = kotlinToLua(context, "ret", returnType, functionWrappers)
-                                addStatement("return $retCall", *extras.toTypedArray())
+                                val block = kotlinToLua(context, "ret", returnType, functionWrappers)
+                                addStatement("return %L", block)
                             }
                         }.build()
                 ).build()
@@ -237,7 +228,7 @@ internal class LuaFunctionMapping(
                             } else {
                                 decl.parameters.forEachIndexed { index, arg ->
                                     addParameter("arg$index", LuaValueClassName)
-                                    val (call, extras) = luaToKotlin(
+                                    val block = luaToKotlin(
                                         decl,
                                         "arg$index",
                                         arg.type.resolve(),
@@ -246,7 +237,7 @@ internal class LuaFunctionMapping(
                                     )
                                     val ktArg = "luaArg$index"
                                     ktArgs += ktArg
-                                    addStatement("val $ktArg = $call", *extras.toTypedArray())
+                                    addStatement("val %L = %L", ktArg, block)
                                 }
                             }
 
@@ -261,8 +252,8 @@ internal class LuaFunctionMapping(
                             if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
                                 "return %M", LuaValueClassName.member("NONE")
                             ) else {
-                                val (retCall, extras) = kotlinToLua(decl, "ret", returnType, functionWrappers)
-                                addStatement("return $retCall", *extras.toTypedArray())
+                                val block = kotlinToLua(decl, "ret", returnType, functionWrappers)
+                                addStatement("return %L", block)
                             }
                         }.build()
                 ).build()
@@ -275,13 +266,13 @@ internal class LuaFunctionMapping(
         wrapped: PropertySpec,
         functionWrappers: Map<String, KSType>
     ) {
-        val (call, extras) = kotlinToLua(
+        val block = kotlinToLua(
             it.source,
             "${wrapped.name}.${it.simpleName}",
             it.type.resolve(),
             functionWrappers
         )
-        builder.addStatement("%S -> $call", it.simpleName, *extras.toTypedArray())
+        builder.addStatement("%S -> %L", it.simpleName, block)
     }
 
     fun kotlinToLua(
@@ -289,95 +280,68 @@ internal class LuaFunctionMapping(
         receiver: String,
         type: KSType,
         functionWrappers: Map<String, KSType>
-    ): Pair<String, List<Any>> {
-        val extras = mutableListOf<Any>()
-
+    ): CodeBlock {
         val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
             it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
                 .qualifiedName?.asString() == LuajMapped::class.qualifiedName
         }
 
-        fun call(nestedReceiver: String): String = if (customMapper != null) {
+        fun call(nestedReceiver: String): CodeBlock = if (customMapper != null) {
             val mapper = customMapper.arguments.first { it.name?.asString() == "mapper" }.value as KSType
-            extras += mapper.toTypeName()
-            extras += nestedReceiver
             when (val ck = (mapper.declaration as KSClassDeclaration).classKind) {
-                ClassKind.OBJECT -> "%T.toLua(%L)"
-                ClassKind.CLASS -> "%T().toLua(%L)"
+                ClassKind.OBJECT -> CodeBlock.of("%T.toLua(%L)", mapper.toTypeName(), nestedReceiver)
+                ClassKind.CLASS -> CodeBlock.of("%T().toLua(%L)", mapper.toTypeName(), nestedReceiver)
                 else -> error("Unsupported class kind : $ck", context)
             }
         } else when (type.declaration.simpleName.getShortName()) {
-            "String", "Int", "Boolean", "Double" -> {
-                extras += LuaValueOfName
-                extras += nestedReceiver
-                "%M(%L)"
-            }
+            "String", "Int", "Boolean", "Double" -> CodeBlock.of("%M(%L)", LuaValueOfName, nestedReceiver)
 
-            "Long", "Float" -> {
-                extras += LuaValueOfName
-                extras += nestedReceiver
-                "%M(%L.toDouble())"
-            }
+            "Long", "Float" -> CodeBlock.of("%M(%L.toDouble())", LuaValueOfName, nestedReceiver)
 
             else -> {
                 if (type.isFunctionType) {
                     val wrapperName = type.functionWrapperName()
                     if (wrapperName in functionWrappers) {
-                        extras += nestedReceiver
-                        extras += wrapperName
-                        extras += wrapperName
-                        extras += nestedReceiver
-                        "(%L as? %N)?.luaFunction ?: K2L%N(%L)"
+                        CodeBlock.of(
+                            "(%L as? %N)?.luaFunction ?: K2L%N(%L)",
+                            nestedReceiver, wrapperName, wrapperName, nestedReceiver
+                        )
                     } else {
-                        extras += MemberName("kotlin", "TODO")
-                        extras += "No wrapper found for $type (expected $wrapperName)"
-                        "%M(%S)"
+                        CodeBlock.of(
+                            "%M(%S)",
+                            MemberName("kotlin", "TODO"),
+                            "No wrapper found for $type (expected $wrapperName)"
+                        )
                     }
                 } else {
-                    var call: String? = null
+                    var call: CodeBlock? = null
                     val typeDeclaration = type.declaration
                     if (typeDeclaration is KSClassDeclaration) {
                         // Separated from supertypes as supertypes is expensive
                         when (typeDeclaration.toClassName()) {
-                            LKExposedName -> {
-                                extras += nestedReceiver
-                                call = "%L.toLua()"
-                            }
+                            LKExposedName -> call = CodeBlock.of("%L.toLua()", nestedReceiver)
 
-                            LuaValueClassName -> {
-                                extras += nestedReceiver
-                                call = "%L"
-                            }
+                            LuaValueClassName -> call = CodeBlock.of("%L", nestedReceiver)
 
                             else -> {
                                 val superTypes = typeDeclaration.getAllSuperTypes()
 
                                 when {
                                     superTypes.any { it.toClassName() == KotlinIterableName } -> {
-                                        extras += LuaTableOfName
-                                        extras += nestedReceiver
-
                                         val bound = type.arguments.singleOrNull()?.type?.resolve()
                                             ?: error("Expected a single argument type", context)
 
                                         warnIfOpenNotExposed(bound, context)
 
-                                        val (nestedCall, nestedExtras) = kotlinToLua(
-                                            context,
-                                            "element",
-                                            bound,
-                                            functionWrappers
+                                        val nested = kotlinToLua(context, "element", bound, functionWrappers)
+
+                                        call = CodeBlock.of(
+                                            "%M(emptyArray(), %L.map { element -> %L }.toTypedArray())",
+                                            LuaTableOfName, nestedReceiver, nested
                                         )
-
-                                        extras.addAll(nestedExtras)
-
-                                        call = "%M(emptyArray(), %L.map { element -> $nestedCall }.toTypedArray())"
                                     }
 
                                     typeDeclaration.isMapType() -> {
-                                        extras += LuaTableOfName
-                                        extras += nestedReceiver
-
                                         val keyBound = type.arguments.getOrNull(0)?.type?.resolve()
                                             ?: error("Expected a key type argument", context)
                                         val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
@@ -386,49 +350,34 @@ internal class LuaFunctionMapping(
                                         warnIfOpenNotExposed(keyBound, context)
                                         warnIfOpenNotExposed(valueBound, context)
 
-                                        val (keyCall, keyExtras) = kotlinToLua(
-                                            context,
-                                            "entry.key",
-                                            keyBound,
-                                            functionWrappers
-                                        )
-                                        val (valueCall, valueExtras) = kotlinToLua(
-                                            context,
-                                            "entry.value",
-                                            valueBound,
-                                            functionWrappers
-                                        )
-
-                                        extras.addAll(keyExtras)
-                                        extras.addAll(valueExtras)
+                                        val keyBlock = kotlinToLua(context, "entry.key", keyBound, functionWrappers)
+                                        val valueBlock =
+                                            kotlinToLua(context, "entry.value", valueBound, functionWrappers)
 
                                         // LuaTable's (keys, values) constructor does *not* take parallel
                                         // key/value arrays: the first array is a flat, interleaved
                                         // [key0, value0, key1, value1, ...] list (as for a `{[k]=v, ...}`
                                         // table constructor), and the second is a plain positional/array
                                         // part - which we don't use here.
-                                        call = "%M(%L.entries.flatMap { entry -> " +
-                                                "listOf($keyCall, $valueCall) }.toTypedArray(), emptyArray())"
+                                        call = CodeBlock.of(
+                                            "%M(%L.entries.flatMap { entry -> listOf(%L, %L) }" +
+                                                    ".toTypedArray(), emptyArray())",
+                                            LuaTableOfName, nestedReceiver, keyBlock, valueBlock
+                                        )
                                     }
 
-                                    superTypes.any { it.toClassName() == LKExposedName } -> {
-                                        extras += nestedReceiver
-                                        call = "%L.toLua()"
-                                    }
+                                    superTypes.any { it.toClassName() == LKExposedName } ->
+                                        call = CodeBlock.of("%L.toLua()", nestedReceiver)
 
-                                    superTypes.any { it.toClassName() == LuaValueClassName } -> {
-                                        extras += nestedReceiver
-                                        call = "%L"
-                                    }
+                                    superTypes.any { it.toClassName() == LuaValueClassName } ->
+                                        call = CodeBlock.of("%L", nestedReceiver)
                                 }
                             }
                         }
                     }
 
                     if (call == null && typeDeclaration.isExposed) {
-                        extras += typeDeclaration.accessClassName
-                        extras += nestedReceiver
-                        call = "%T(%L)"
+                        call = CodeBlock.of("%T(%L)", typeDeclaration.accessClassName, nestedReceiver)
                     }
 
                     call ?: type.unsupportedTypeError(context)
@@ -436,14 +385,10 @@ internal class LuaFunctionMapping(
             }
         }
 
-        val withNullability = if (type.nullability == Nullability.NULLABLE) {
-            extras += receiver
-            val call = call("notNil")
-            extras += LuaValueClassName.member("NIL")
-            "%L?.let { notNil -> $call } ?: %M"
+        return if (type.nullability == Nullability.NULLABLE) {
+            val body = call("notNil")
+            CodeBlock.of("%L?.let { notNil -> %L } ?: %M", receiver, body, LuaValueClassName.member("NIL"))
         } else call(receiver)
-
-        return withNullability to extras
     }
 
     private fun warnIfOpenNotExposed(bound: KSType, context: KSNode) {
