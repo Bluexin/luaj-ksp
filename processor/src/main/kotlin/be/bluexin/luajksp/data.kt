@@ -43,6 +43,8 @@ internal val ThreeArgFunctionName = ZeroArgFunctionName.peerClass("ThreeArgFunct
 internal val VarArgFunctionName = ZeroArgFunctionName.peerClass("VarArgFunction")
 internal val KotlinIterableName = ClassName("kotlin.collections", "Iterable")
 internal val KotlinMapName = ClassName("kotlin.collections", "Map")
+internal val KotlinMutableMapName = ClassName("kotlin.collections", "MutableMap")
+internal val MapAccessClassName = ClassName("be.bluexin.luajksp.annotations", "MapAccess")
 
 /**
  * Unlike [List]/[Iterable], a property or parameter can be typed directly as `Map<K, V>` - in which
@@ -51,6 +53,20 @@ internal val KotlinMapName = ClassName("kotlin.collections", "Map")
  */
 internal fun KSClassDeclaration.isMapType(): Boolean =
     toClassName() == KotlinMapName || getAllSuperTypes().any { it.toClassName() == KotlinMapName }
+
+/**
+ * Same caveat as [isMapType]: a directly `MutableMap<K, V>`-typed declaration won't show up in its
+ * own supertypes either.
+ *
+ * The Map/MutableMap convention this backs: values received *from* Lua (function parameters, property
+ * setters) are always a disconnected copy built fresh from whatever the caller passed, so they must be
+ * typed as read-only [Map] - typing them [MutableMap] would dishonestly imply mutations are observed
+ * by the caller. Conversely, values exposed *to* Lua (property getters, return types) are always
+ * backed by a live [MapAccess] wrapper, which only makes sense over a genuinely mutable collection -
+ * so those must be typed [MutableMap]. This is enforced at KSP time in [be.bluexin.luajksp.generators.LuaFunctionMapping].
+ */
+internal fun KSClassDeclaration.isMutableMapType(): Boolean =
+    toClassName() == KotlinMutableMapName || getAllSuperTypes().any { it.toClassName() == KotlinMutableMapName }
 
 internal val LKExposedName = LKExposed::class.asClassName()
 internal val BeforeSetName = BeforeSet::class.asClassName()

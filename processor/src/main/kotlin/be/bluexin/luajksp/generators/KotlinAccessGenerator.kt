@@ -69,6 +69,16 @@ internal class KotlinAccessGenerator(
                 properties.values.filter { it is ExposedPropertyLike && it.hasSetter }.forEach {
                     addLuaToKotlin(it as ExposedPropertyLike, wrapped, functionWrappers)
                 }
+                // A getter-only `MutableMap` property has no Kotlin setter to dispatch to, but
+                // `t.element.someMap = {...}` is still supported: it clears and repopulates the live
+                // backing map in place (see LuaFunctionMapping.buildMutableMapReplace) rather than
+                // replacing the reference.
+                properties.values.filter {
+                    it is ExposedPropertyLike && it.hasGetter && !it.hasSetter &&
+                            (it.type.resolve().declaration as? KSClassDeclaration)?.isMutableMapType() == true
+                }.forEach {
+                    addMutableMapReplace(it as ExposedPropertyLike, wrapped, functionWrappers)
+                }
                 addStatement(
                     "else -> " +
                             if (parentName == LuaUserdataClassName) "error(\"Cannot set \$key on \${javaClass.simpleName}\")"
@@ -156,6 +166,17 @@ internal class KotlinAccessGenerator(
         val block = mapping.luaToKotlin(it.source, "value", type, wrapped, functionWrappers)
 
         addStatement("%S -> %N.%L = %L", it.simpleName, wrapped, it.simpleName, block)
+    }
+
+    private fun FunSpec.Builder.addMutableMapReplace(
+        it: ExposedPropertyLike,
+        wrapped: PropertySpec,
+        functionWrappers: MutableMap<String, KSType>
+    ) {
+        val type = it.type.resolve()
+        val block = mapping.buildMutableMapReplace(it.source, wrapped, it.simpleName, type, functionWrappers)
+
+        addStatement("%S -> %L", it.simpleName, block)
     }
 
     private fun FunSpec.Builder.addGetFunction(

@@ -63,18 +63,22 @@ internal class LuaFunctionMapping(
             } else {
                 val typeDeclaration = type.declaration
                 if (typeDeclaration is KSClassDeclaration && typeDeclaration.isMapType()) {
+                    if (typeDeclaration.isMutableMapType()) {
+                        error(
+                            "Accepting a MutableMap from Lua is not supported: values received from " +
+                                    "Lua are always a disconnected copy, so mutating a MutableMap " +
+                                    "parameter/setter would never be observed by the caller - use Map " +
+                                    "instead",
+                            context
+                        )
+                    }
+
                     val keyBound = type.arguments.getOrNull(0)?.type?.resolve()
                         ?: error("Expected a key type argument", context)
                     val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
                         ?: error("Expected a value type argument", context)
 
-                    val keyBlock = luaToKotlin(context, "key", keyBound, wrapped, functionWrappers)
-                    val valueBlock = luaToKotlin(context, "t.get(key)", valueBound, wrapped, functionWrappers)
-
-                    CodeBlock.of(
-                        "%L.checktable().let { t -> t.keys().associate { key -> %L to %L } }",
-                        receiver, keyBlock, valueBlock
-                    )
+                    buildMapFromLuaValue(context, receiver, keyBound, valueBound, wrapped, functionWrappers)
                 } else if (typeDeclaration.isExposed) {
                     CodeBlock.of(
                         "(%L.checkuserdata(%T::class.java) as %T).%N",
@@ -87,6 +91,81 @@ internal class LuaFunctionMapping(
         return if (type.nullability == Nullability.NULLABLE)
             CodeBlock.of("if (%L.isnil()) null else %L", receiver, body)
         else body
+    }
+
+    /**
+     * Converts an incoming Lua value - a plain table or an existing [be.bluexin.luajksp.annotations.MapAccess] -
+     * into a fresh, disconnected `Map<K, V>` snapshot. Shared by [luaToKotlin]'s own map handling
+     * (function parameters, property setters) and [buildMutableMapReplace] (assigning a table/MapAccess
+     * to a getter-only `MutableMap` property, which clears and repopulates the live backing map rather
+     * than replacing the reference).
+     */
+    private fun buildMapFromLuaValue(
+        context: KSNode,
+        receiver: String,
+        keyBound: KSType,
+        valueBound: KSType,
+        wrapped: PropertySpec,
+        functionWrappers: Map<String, KSType>
+    ): CodeBlock {
+        val keyBlock = luaToKotlin(context, "key", keyBound, wrapped, functionWrappers)
+        val valueFromTableBlock = luaToKotlin(context, "v.get(key)", valueBound, wrapped, functionWrappers)
+        val valueFromAccessBlock = luaToKotlin(context, "v.rawGet(key)", valueBound, wrapped, functionWrappers)
+
+        // The trailing `as Map<K, V>` works around the Kotlin compiler inferring this `when`'s
+        // type as plain `Any` (rather than the associate{} calls' actual `Map<K, V>`) specifically
+        // when this expression ends up nested inside a class extending LuaUserdata, as every
+        // generated access/wrapper class does.
+        return CodeBlock.builder()
+            .add("(")
+            .beginControlFlow("when (val v = %L)", receiver)
+            .add(
+                "is %T -> v.keys().associate { key -> %L to %L }\n",
+                LuaTableClassName, keyBlock, valueFromTableBlock
+            )
+            .add(
+                "is %T<*, *> -> v.keys().associate { key -> %L to %L }\n",
+                MapAccessClassName, keyBlock, valueFromAccessBlock
+            )
+            .add("else -> error(\"Expected a table or MapAccess, got \$v\")\n")
+            .endControlFlow()
+            .add(" as %T<%T, %T>)", KotlinMapName, keyBound.toTypeName(), valueBound.toTypeName())
+            .build()
+    }
+
+    /**
+     * Builds the `"propName" -> ...` branch body for assigning a table/MapAccess to a getter-only
+     * `MutableMap<K, V>` property (`t.element.someMap = {...}`) - there's no Kotlin setter to call, so
+     * this clears and repopulates the live backing map in place instead of replacing the reference.
+     */
+    fun buildMutableMapReplace(
+        context: KSNode,
+        wrapped: PropertySpec,
+        propName: String,
+        type: KSType,
+        functionWrappers: Map<String, KSType>
+    ): CodeBlock {
+        val keyBound = type.arguments.getOrNull(0)?.type?.resolve()
+            ?: error("Expected a key type argument", context)
+        val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
+            ?: error("Expected a value type argument", context)
+
+        requireNonNullMapBounds(keyBound, valueBound, type, context)
+
+        val convertedMap = buildMapFromLuaValue(context, "value", keyBound, valueBound, wrapped, functionWrappers)
+
+        return CodeBlock.of("%N.%L.also { m -> m.clear(); m.putAll(%L) }", wrapped, propName, convertedMap)
+    }
+
+    private fun requireNonNullMapBounds(keyBound: KSType, valueBound: KSType, type: KSType, context: KSNode) {
+        if (keyBound.nullability == Nullability.NULLABLE || valueBound.nullability == Nullability.NULLABLE) {
+            error(
+                "Exposed MutableMap key and value types must be non-null: native Lua table semantics " +
+                        "use nil to mean both \"missing\" and \"remove\", so a nullable key or value " +
+                        "would be ambiguous - found $type",
+                context
+            )
+        }
     }
 
     fun addFunctionWrapper(
@@ -134,7 +213,8 @@ internal class LuaFunctionMapping(
                                     context,
                                     "arg$index",
                                     arg.type!!.resolve(),
-                                    functionWrappers
+                                    functionWrappers,
+                                    wrapped
                                 )
                                 val luaArg = "luaArg$index"
                                 luaArgs += luaArg
@@ -200,7 +280,7 @@ internal class LuaFunctionMapping(
 
                             if (isReturnUnit) addStatement("return %M", LuaValueClassName.member("NONE"))
                             else {
-                                val block = kotlinToLua(context, "ret", returnType, functionWrappers)
+                                val block = kotlinToLua(context, "ret", returnType, functionWrappers, wrapped)
                                 addStatement("return %L", block)
                             }
                         }.build()
@@ -252,7 +332,7 @@ internal class LuaFunctionMapping(
                             if (returnType.declaration.qualifiedName?.asString() == "kotlin.Unit") addStatement(
                                 "return %M", LuaValueClassName.member("NONE")
                             ) else {
-                                val block = kotlinToLua(decl, "ret", returnType, functionWrappers)
+                                val block = kotlinToLua(decl, "ret", returnType, functionWrappers, wrapped)
                                 addStatement("return %L", block)
                             }
                         }.build()
@@ -270,7 +350,8 @@ internal class LuaFunctionMapping(
             it.source,
             "${wrapped.name}.${it.simpleName}",
             it.type.resolve(),
-            functionWrappers
+            functionWrappers,
+            wrapped
         )
         builder.addStatement("%S -> %L", it.simpleName, block)
     }
@@ -279,7 +360,8 @@ internal class LuaFunctionMapping(
         context: KSNode,
         receiver: String,
         type: KSType,
-        functionWrappers: Map<String, KSType>
+        functionWrappers: Map<String, KSType>,
+        wrapped: PropertySpec
     ): CodeBlock {
         val customMapper = (type.annotations + type.declaration.annotations).firstOrNull {
             it.shortName.asString() == "LuajMapped" && it.annotationType.resolve().declaration
@@ -333,7 +415,7 @@ internal class LuaFunctionMapping(
 
                                         warnIfOpenNotExposed(bound, context)
 
-                                        val nested = kotlinToLua(context, "element", bound, functionWrappers)
+                                        val nested = kotlinToLua(context, "element", bound, functionWrappers, wrapped)
 
                                         call = CodeBlock.of(
                                             "%M(emptyArray(), %L.map { element -> %L }.toTypedArray())",
@@ -342,27 +424,44 @@ internal class LuaFunctionMapping(
                                     }
 
                                     typeDeclaration.isMapType() -> {
+                                        if (!typeDeclaration.isMutableMapType()) {
+                                            error(
+                                                "Exposing a read-only Map to Lua is not supported: " +
+                                                        "scripts can't tell a disposable snapshot apart " +
+                                                        "from a live MutableMap, which is exactly the " +
+                                                        "confusion this convention avoids - use " +
+                                                        "MutableMap instead",
+                                                context
+                                            )
+                                        }
+
                                         val keyBound = type.arguments.getOrNull(0)?.type?.resolve()
                                             ?: error("Expected a key type argument", context)
                                         val valueBound = type.arguments.getOrNull(1)?.type?.resolve()
                                             ?: error("Expected a value type argument", context)
 
+                                        requireNonNullMapBounds(keyBound, valueBound, type, context)
+
                                         warnIfOpenNotExposed(keyBound, context)
                                         warnIfOpenNotExposed(valueBound, context)
 
-                                        val keyBlock = kotlinToLua(context, "entry.key", keyBound, functionWrappers)
-                                        val valueBlock =
-                                            kotlinToLua(context, "entry.value", valueBound, functionWrappers)
+                                        val keyToLua = kotlinToLua(context, "k", keyBound, functionWrappers, wrapped)
+                                        val keyFromLua = luaToKotlin(context, "lv", keyBound, wrapped, functionWrappers)
+                                        val valueToLua =
+                                            kotlinToLua(context, "v", valueBound, functionWrappers, wrapped)
+                                        val valueFromLua =
+                                            luaToKotlin(context, "lv", valueBound, wrapped, functionWrappers)
 
-                                        // LuaTable's (keys, values) constructor does *not* take parallel
-                                        // key/value arrays: the first array is a flat, interleaved
-                                        // [key0, value0, key1, value1, ...] list (as for a `{[k]=v, ...}`
-                                        // table constructor), and the second is a plain positional/array
-                                        // part - which we don't use here.
+                                        // Materializes a live MapAccess rather than a snapshot LuaTable:
+                                        // every Map exposed to Lua is required to be a MutableMap (see
+                                        // the error above), so get/set on the returned handle always
+                                        // affect the real backing map.
                                         call = CodeBlock.of(
-                                            "%M(%L.entries.flatMap { entry -> listOf(%L, %L) }" +
-                                                    ".toTypedArray(), emptyArray())",
-                                            LuaTableOfName, nestedReceiver, keyBlock, valueBlock
+                                            "%T(%L, %T.Codec({ k -> %L }, { lv -> %L }), " +
+                                                    "%T.Codec({ v -> %L }, { lv -> %L }))",
+                                            MapAccessClassName, nestedReceiver,
+                                            MapAccessClassName, keyToLua, keyFromLua,
+                                            MapAccessClassName, valueToLua, valueFromLua,
                                         )
                                     }
 

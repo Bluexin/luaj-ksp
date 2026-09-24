@@ -151,22 +151,6 @@ class ReadWriteTypesTest {
     }
 
     @Test
-    fun `writing on map type is ok`() {
-        val test = ReadWriteTypesHolder()
-
-        LuaJTest.runTestScript(
-            """
-                --- @type ReadWriteTypesHolder
-                local t = testing.testValue
-                t.map = { foo = 3, bar = 4 }
-            """.trimIndent(),
-            test.toLua()
-        ).executionErrorAsFailure()
-
-        assertEquals(mapOf("foo" to 3, "bar" to 4), test.map)
-    }
-
-    @Test
     fun `writing a callback with named function works as expected`() {
         val test = ReadWriteTypesHolder()
 
@@ -194,7 +178,6 @@ class ReadWriteTypesTest {
         var nullableText: String? = null,
         val javaHolder: JavaPropertyLikeHolder = JavaPropertyLikeHolder(),
         var sum: (Int, Int) -> Int = { _, _ -> error("Not implemented") },
-        var map: Map<String, Int> = mapOf("one" to 1, "two" to 2)
     ) {
 
         /**

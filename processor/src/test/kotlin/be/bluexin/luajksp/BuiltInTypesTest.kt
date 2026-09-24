@@ -636,13 +636,13 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
-    fun `process map processing`() {
+    fun `process mutable map is exposed as a live MapAccess`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """
                     import be.bluexin.luajksp.annotations.LuajExpose
 
                     @LuajExpose
-                    class KClass(var map: Map<String, Int>)
+                    class KClass(val map: MutableMap<String, Int>)
                 """
         )
 
@@ -650,53 +650,160 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
 
-        // Diagnostics
-        assertContains(result.messages, "Generating access.KClassAccess for KClass")
+        val typings = result.typings("KClass")
+        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
+        assertNotNull(tsTyping)
+        assertContains(tsTyping, "map: Record<string, number>")
+        val luaTyping = typings[GeneratedTypings.LUA]
+        assertNotNull(luaTyping)
+        assertContains(luaTyping, "--- @field map table<string, number>")
 
-        assertDoesNotThrow {
-            result.classLoader.loadClass("access.KClassAccess")
-        }
-
-        val input = mapOf("hello" to 1, "world" to 2)
+        val input = mutableMapOf("hello" to 1, "world" to 2)
         val data = result.instance("KClass", input)
         val access = result.instance("access.KClassAccess", data)
 
         assertIs<LuaUserdata>(access)
 
-        val map = assertDoesNotThrow {
-            access.get("map")
-        }
+        val map = assertDoesNotThrow { access.get("map") }
+        assertTrue(map.isuserdata())
 
-        assertTrue(map.istable())
-
+        // native get
         input.forEach { (k, v) ->
-            val luaValue = map.get(valueOf(k))
-            assertTrue(luaValue.isint(), "Unexpected type for key $k: ${luaValue.typename()}")
-            assertEquals(v, luaValue.checkint(), "Unexpected value for key $k")
+            val got = map.get(valueOf(k))
+            assertTrue(got.isint(), "Unexpected type for key $k: ${got.typename()}")
+            assertEquals(v, got.checkint())
         }
+        assertTrue(map.get(valueOf("missing")).isnil())
 
-        val newTable = tableOf(
-            arrayOf(valueOf("foo"), valueOf(3), valueOf("bar"), valueOf(4)),
-            emptyArray()
+        // native size, via the # operator (len())
+        assertEquals(2, map.len().checkint())
+
+        // native set() mutates the live backing map - `input` is the exact same reference `data.map` holds
+        map.set(valueOf("foo"), valueOf(3))
+        assertEquals(3, input["foo"])
+        assertEquals(3, map.len().checkint())
+
+        // native delete, via assigning nil (matches how a real Lua table treats nil-assignment)
+        map.set(valueOf("foo"), LuaValue.NIL)
+        assertFalse(input.containsKey("foo"))
+        assertEquals(2, map.len().checkint())
+
+        // __pairs metamethod is set up so `pairs(t.map)` works natively - see the sample module's
+        // script-level test for the full iteration protocol exercised end to end
+        assertTrue(map.getmetatable().get(LuaValue.PAIRS).isfunction())
+    }
+
+    @Test
+    fun `process assigning a table to a getter-only MutableMap property replaces its contents`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(val map: MutableMap<String, Int>)
+                """
         )
-        assertDoesNotThrow {
-            access.set("map", newTable)
-        }
 
-        @Suppress("UNCHECKED_CAST")
-        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Map<String, Int>>?
-        assertNotNull(f)
-        assertEquals(mapOf("foo" to 3, "bar" to 4), f(data))
+        val result = compile(kotlinSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
 
-        val typings = result.typings("KClass")
+        val input = mutableMapOf("hello" to 1, "world" to 2)
+        val data = result.instance("KClass", input)
+        val access = result.instance("access.KClassAccess", data)
+        assertIs<LuaUserdata>(access)
 
-        val tsTyping = typings[GeneratedTypings.TYPESCRIPT]
-        assertNotNull(tsTyping)
-        assertContains(tsTyping, "map: Record<string, number>")
+        val newTable = tableOf(arrayOf(valueOf("foo"), valueOf(3), valueOf("bar"), valueOf(4)), emptyArray())
+        assertDoesNotThrow { access.set("map", newTable) }
 
-        val luaTyping = typings[GeneratedTypings.LUA]
-        assertNotNull(luaTyping)
-        assertContains(luaTyping, "--- @field map table<string, number>")
+        // The same backing map instance is cleared and repopulated in place - no reference swap.
+        assertEquals(mapOf("foo" to 3, "bar" to 4), input)
+    }
+
+    @Test
+    fun `process nullable MutableMap value type is unsupported`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(val map: MutableMap<String, Int?>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertNotEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        assertContains(result.messages, "Exposed MutableMap key and value types must be non-null")
+    }
+
+    @Test
+    fun `process map received from Lua accepts a table literal or a MapAccess`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class Holder(val map: MutableMap<String, Int>)
+
+                    @LuajExpose
+                    class KClass {
+                        fun sum(m: Map<String, Int>): Int = m.values.sum()
+                    }
+                """
+        )
+
+        val result = compile(kotlinSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+
+        val data = result.instance("KClass")
+        val access = result.instance("access.KClassAccess", data)
+        assertIs<LuaUserdata>(access)
+        val sumFn = access.get("sum")
+
+        val table = tableOf(arrayOf(valueOf("a"), valueOf(1), valueOf("b"), valueOf(2)), emptyArray())
+        assertEquals(3, sumFn.call(table).checkint())
+
+        val holderData = result.instance("Holder", mutableMapOf("x" to 10, "y" to 20))
+        val holderAccess = result.instance("access.HolderAccess", holderData)
+        assertIs<LuaUserdata>(holderAccess)
+        val mapAccess = holderAccess.get("map")
+        assertEquals(30, sumFn.call(mapAccess).checkint())
+    }
+
+    @Test
+    fun `process MutableMap received from Lua is unsupported`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass {
+                        fun foo(m: MutableMap<String, Int>) {}
+                    }
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertNotEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        assertContains(result.messages, "Accepting a MutableMap from Lua is not supported")
+    }
+
+    @Test
+    fun `process read-only Map exposed to Lua is unsupported`() {
+        val kotlinSource = SourceFile.kotlin(
+            "KClass.kt", """
+                    import be.bluexin.luajksp.annotations.LuajExpose
+
+                    @LuajExpose
+                    class KClass(val map: Map<String, Int>)
+                """
+        )
+
+        val result = compile(kotlinSource)
+
+        assertNotEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        assertContains(result.messages, "Exposing a read-only Map to Lua is not supported")
     }
 
     @Test
@@ -709,7 +816,7 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
                     class Value(val text: String)
 
                     @LuajExpose
-                    class KClass(val map: Map<String, Value>)
+                    class KClass(val map: MutableMap<String, Value>)
                 """
         )
 
@@ -725,13 +832,13 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
         assertNotNull(luaTyping)
         assertContains(luaTyping, "--- @field map table<string, Value>")
 
-        val data = result.instance("KClass", mapOf("a" to result.instance("Value", "hello")))
+        val data = result.instance("KClass", mutableMapOf("a" to result.instance("Value", "hello")))
         val access = result.instance("access.KClassAccess", data)
 
         assertIs<LuaUserdata>(access)
 
         val map = assertDoesNotThrow { access.get("map") }
-        assertTrue(map.istable())
+        assertTrue(map.isuserdata())
 
         val entry = map.get(valueOf("a"))
         assertIs<LuaUserdata>(entry)
@@ -745,14 +852,14 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
                     import be.bluexin.luajksp.annotations.LuajExpose
 
                     @LuajExpose
-                    class KClass(val map: Map<*, *>)
+                    class KClass(val map: MutableMap<*, *>)
                 """
         )
 
         val result = compile(kotlinSource)
 
         assertNotEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
-        assertContains(result.messages, "Unsupported type Any?")
+        assertContains(result.messages, "Exposed MutableMap key and value types must be non-null")
     }
 
     @Test

@@ -152,14 +152,75 @@ class ReadOnlyTypesTest {
             """
                 |--- @type ReadOnlyTypesHolder
                 |local t = testing.testValue
+                |assert_equals(${test.map.size}, #t.map, 'map.size')
                 ${
                 test.map.entries.joinToString(separator = "\n") { (k, v) ->
-                    "|assert_equals($v, t.map['$k'], 'map[$k]')"
+                    "|assert_equals($v, t.map['$k'], \"map['$k']\")"
+                }
+            }
+            |assert_equals(nil, t.map['missing'], "map['missing']")
+            |""".trimMargin(),
+            test.toLua()
+        ).executionErrorAsFailure()
+    }
+
+    @Test
+    fun `mutating map type from a script is ok and observed by Kotlin`() {
+        val test = ReadOnlyTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                --- @type ReadOnlyTypesHolder
+                local t = testing.testValue
+                t.map['three'] = 3
+                t.map['one'] = nil
+                assert_equals(nil, t.map['one'], "map['one'] after delete")
+            """.trimIndent(),
+            test.toLua()
+        ).executionErrorAsFailure()
+
+        assertEquals(mapOf("two" to 2, "three" to 3), test.map)
+    }
+
+    @Test
+    fun `iterating map type with pairs is ok`() {
+        val test = ReadOnlyTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                |--- @type ReadOnlyTypesHolder
+                |local t = testing.testValue
+                |local seen = {}
+                |local count = 0
+                |for k, v in pairs(t.map) do
+                |    seen[k] = v
+                |    count = count + 1
+                |end
+                |assert_equals(${test.map.size}, count, 'iterated count')
+                ${
+                test.map.entries.joinToString(separator = "\n") { (k, v) ->
+                    "|assert_equals($v, seen['$k'], \"seen['$k']\")"
                 }
             }
             |""".trimMargin(),
             test.toLua()
         ).executionErrorAsFailure()
+    }
+
+    @Test
+    fun `assigning a table to map type replaces its contents`() {
+        val test = ReadOnlyTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                --- @type ReadOnlyTypesHolder
+                local t = testing.testValue
+                t.map = { foo = 3, bar = 4 }
+            """.trimIndent(),
+            test.toLua()
+        ).executionErrorAsFailure()
+
+        assertEquals(mapOf("foo" to 3, "bar" to 4), test.map)
     }
 
     @LuajExpose
@@ -172,7 +233,7 @@ class ReadOnlyTypesTest {
         val nullableText: String? = null,
         val uuid: ExposedUUID = UUID.randomUUID(),
         val list: List<String> = listOf("hello", "world"),
-        val map: Map<String, Int> = mapOf("one" to 1, "two" to 2)
+        val map: MutableMap<String, Int> = mutableMapOf("one" to 1, "two" to 2)
     ) {
 
         /**
