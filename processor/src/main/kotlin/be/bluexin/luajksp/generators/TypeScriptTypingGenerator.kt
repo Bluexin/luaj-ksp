@@ -170,7 +170,7 @@ internal class TypeScriptTypingGenerator(
         }
 
     private fun tsTypeSimpleMapping(typeDecl: KSDeclaration): String? = when (typeDecl.simpleName.getShortName()) {
-        "String" -> "string"
+        "String", "Char" -> "string"
         "Int", "Double", "Long", "Float", "Short", "Byte" -> "number"
         "Boolean" -> "boolean"
         "Unit" -> "void"

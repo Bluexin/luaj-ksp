@@ -134,6 +134,34 @@ class ReadWriteTypesTest {
     }
 
     @Test
+    fun `writing a too-long string to a Char field is nok`() {
+        val test = ReadWriteTypesHolder()
+
+        val result = LuaJTest.runTestScript(
+            "_t.letter = 'too long'",
+            test.toLua()
+        )
+        assertIs<ScriptResult.Failure>(result)
+        assertContains(result.errorMessage, "Expected a single character, got 'too long'")
+    }
+
+    @Test
+    fun `writing a single character to a Char field is ok`() {
+        val test = ReadWriteTypesHolder()
+
+        LuaJTest.runTestScript(
+            """
+                --- @type ReadWriteTypesHolder
+                local t = testing.testValue
+                t.letter = 'z'
+            """.trimIndent(),
+            test.toLua()
+        ).executionErrorAsFailure()
+
+        assertEquals('z', test.letter)
+    }
+
+    @Test
     fun `writing a callback with closure works as expected`() {
         val test = ReadWriteTypesHolder()
 
@@ -178,6 +206,7 @@ class ReadWriteTypesTest {
         var nullableText: String? = null,
         val javaHolder: JavaPropertyLikeHolder = JavaPropertyLikeHolder(),
         var sum: (Int, Int) -> Int = { _, _ -> error("Not implemented") },
+        var letter: Char = 'a',
     ) {
 
         /**

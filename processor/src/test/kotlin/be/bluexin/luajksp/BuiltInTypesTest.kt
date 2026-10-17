@@ -224,6 +224,37 @@ class BuiltInTypesTest : LKSymbolProcessorTest() {
     }
 
     @Test
+    fun `process Char type`() {
+        val result = `set up simple type test`("Char", "string", "string")
+
+        val data = result.instance("KClass", 'h')
+        val access = result.instance("access.KClassAccess", data)
+
+        assertIs<LuaUserdata>(access)
+
+        val cb = assertDoesNotThrow {
+            access.get("cb")
+        }
+
+        assertTrue(cb.isstring())
+        assertEquals("h", cb.checkjstring())
+        assertIs<LuaString>(cb)
+
+        assertDoesNotThrow {
+            access.set("cb", CoerceJavaToLua.coerce("w"))
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val f = data::class.declaredMemberProperties.singleOrNull() as KProperty1<Any, Char>?
+        assertNotNull(f)
+        assertEquals('w', f(data))
+
+        assertThrows<Exception> {
+            access.set("cb", CoerceJavaToLua.coerce("too long"))
+        }
+    }
+
+    @Test
     fun `process unit return type KFunction processing`() {
         val kotlinSource = SourceFile.kotlin(
             "KClass.kt", """

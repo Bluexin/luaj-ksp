@@ -49,6 +49,24 @@ internal class LuaFunctionMapping(
                 ClassKind.CLASS -> CodeBlock.of("%T().fromLua(%L.checknotnil())", mapper.toTypeName(), receiver)
                 else -> error("Unsupported class kind : $ck", customMapper)
             }
+        } else if (type.declaration.simpleName.getShortName() == "Char") {
+            // Not a plain "%L.xxx()" one-liner like the other simple types (needs a %T for LuaError),
+            // so it can't go through luaToKotlinSimpleMapping's single-%L convenience.
+            //
+            // Deliberately `throw %T(...)`, not `error(...)`: inside a class extending LuaUserdata,
+            // an unqualified `error(...)` call resolves to the *inherited Java static*
+            // `LuaValue.error(String): LuaValue` - not Kotlin's `kotlin.error(Any): Nothing` - which
+            // happens to produce a clean, unwrapped LuaError message (unlike an uncaught Kotlin
+            // stdlib exception, which the interpreter wraps as "vm error: java.lang.XyzException: ...").
+            // That's an easy trap: `error(...)` reads as the stdlib function but isn't, and (unlike
+            // `throw LuaError(...)`) its declared return type is `LuaValue`, not `Nothing`, so it only
+            // type-checks in statement position - it would not compile here, where the branch value is
+            // needed as a `Char`.
+            CodeBlock.of(
+                "%L.checkjstring().let { s -> if (s.length == 1) s[0] else " +
+                        "throw %T(\"Expected a single character, got '\$s'\") }",
+                receiver, LuaErrorClassName
+            )
         } else luaToKotlinSimpleMapping(type.declaration)?.let { CodeBlock.of(it, receiver) } ?: run {
             if (type.isFunctionType) {
                 logger.warn("Found function type", type.declaration)
@@ -379,6 +397,11 @@ internal class LuaFunctionMapping(
             "String", "Int", "Boolean", "Double" -> CodeBlock.of("%M(%L)", LuaValueOfName, nestedReceiver)
 
             "Long", "Float" -> CodeBlock.of("%M(%L.toDouble())", LuaValueOfName, nestedReceiver)
+
+            // Neither Lua nor TS/JS has a char type - a single-character string is the idiomatic
+            // stand-in on both (matching e.g. the DOM's `KeyboardEvent.key`), and is more convenient
+            // script-side than a codepoint/keycode integer.
+            "Char" -> CodeBlock.of("%M(%L.toString())", LuaValueOfName, nestedReceiver)
 
             else -> {
                 if (type.isFunctionType) {
